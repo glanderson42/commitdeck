@@ -1,0 +1,33 @@
+name: checks
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: go test -race ./...
+      - run: go build -o bin/commitdeck-core ./cmd/commitdeck
+      - run: npm run test:smoke
+      - run: npm run test:dev
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - if: runner.os == 'macOS'
+        run: npm run desktop:build -- --bundles app

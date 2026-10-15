@@ -1,0 +1,11 @@
+node_modules/
+dist/
+bin/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/commitdeck-core-*
+.DS_Store
+*.db*
+coverage/
+.commitdeck-test/
+*.tsbuildinfo
