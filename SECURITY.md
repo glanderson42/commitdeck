@@ -6,4 +6,6 @@ Report vulnerabilities privately through GitHub private vulnerability reporting 
 
 Agent events are redacted before storage and streaming; activity metadata and generated context have additional protection. Pattern-based redaction is best effort, not a guarantee for arbitrary/fragmented/encoded secrets, and does not rewrite old history or backups. Avoid putting credentials in prompts, notes, tool arguments or terminal selections. A terminal is a normal developer shell, not a sandbox. Agent permission mediation does not replace OS/provider security.
 
+Permission diagnostics also pass through redaction at the storage boundary. Credential-bearing executable metadata cannot be saved as a remembered rule. Older rules containing recognizable credentials are excluded from display and reuse; their historical database rows are not automatically deleted.
+
 Use patched toolchains and dependencies, keep backups on encrypted storage, and audit proposed remote/destructive actions. This beta has no automatic updates. Only verified release artifacts should be installed; unsigned builds may trigger OS warnings. See [release QA](docs/release-qa.md) for signing, recovery and known verification limits.

@@ -3,7 +3,6 @@ package permissions
 import (
 	"commitdeck/internal/activity"
 	"commitdeck/internal/identity"
-	"commitdeck/internal/redact"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -50,14 +49,7 @@ func (s *Service) Request(r Request, reply func(bool) error) (string, error) {
 		r.HighRisk = true
 	}
 	// Secret-bearing commands cannot be remembered. The original wire input stays only in the provider transport.
-	original := r.Command
-	r.Command = redact.Text(r.Command)
-	r.Description = redact.Text(r.Description)
-	if original != r.Command {
-		r.HighRisk = true
-		r.Executable = ""
-		r.Arguments = []string{}
-	}
+	r = r.Redacted()
 	if err := s.Store.SavePermission(r); err != nil {
 		return "", err
 	}

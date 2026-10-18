@@ -2,9 +2,12 @@ package database
 
 import (
 	"commitdeck/internal/permissions"
+	"commitdeck/internal/redact"
 	"commitdeck/internal/workspace"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"strings"
 )
 
 func (d *DB) PermissionRoot(id string) (string, error) {
@@ -14,6 +17,7 @@ func (d *DB) PermissionRoot(id string) (string, error) {
 }
 
 func (d *DB) SavePermission(r permissions.Request) error {
+	r = r.Redacted()
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -33,6 +37,7 @@ func scanPermission(row scanner) (r permissions.Request, err error) {
 		return
 	}
 	err = json.Unmarshal([]byte(b), &r)
+	r = r.Redacted()
 	r.Status = status
 	r.ResolvedAt = resolved.String
 	if status != "pending" {
@@ -97,11 +102,17 @@ func (d *DB) PermissionRules(id string) ([]permissions.Rule, error) {
 		if err = json.Unmarshal([]byte(b), &r.ArgPrefix); err != nil {
 			return nil, err
 		}
+		if ruleContainsCredentials(r) {
+			continue // Do not emit or reuse unsafe rules from older databases.
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 func (d *DB) SavePermissionRule(r permissions.Rule) error {
+	if ruleContainsCredentials(r) {
+		return errors.New("credential-bearing commands cannot be remembered")
+	}
 	b, err := json.Marshal(r.ArgPrefix)
 	if err != nil {
 		return err
@@ -112,6 +123,11 @@ func (d *DB) SavePermissionRule(r permissions.Rule) error {
 	}
 	_, err = d.Exec("INSERT INTO permission_rules VALUES(?,?,?,?,?,?,?,?)", r.ID, r.WorkspaceID, sid, r.Scope, r.Executable, string(b), r.Cwd, r.CreatedAt)
 	return err
+}
+
+func ruleContainsCredentials(r permissions.Rule) bool {
+	command := strings.Join(append([]string{r.Cwd, r.Executable}, r.ArgPrefix...), " ")
+	return redact.Text(command) != command
 }
 func (d *DB) DeletePermissionRule(id string) error {
 	_, err := d.Exec("DELETE FROM permission_rules WHERE id=?", id)
