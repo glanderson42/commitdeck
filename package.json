@@ -1,6 +1,6 @@
 {
   "name": "commitdeck",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,8 +14,9 @@
     "test:dev": "node scripts/check-dev.mjs",
     "desktop": "tauri dev",
     "desktop:build": "tauri build",
-    "check:desktop": "cargo check --manifest-path src-tauri/Cargo.toml",
-    "test:phase3": "node scripts/smoke-phase3.mjs"
+    "check:desktop": "cargo check --locked --manifest-path src-tauri/Cargo.toml",
+    "test:phase3": "node scripts/smoke-phase3.mjs",
+    "test:release": "node --test scripts/verify-release.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
@@ -40,6 +41,6 @@
     "prettier": "^3.9.10",
     "typescript": "^5.9.0",
     "vite": "^7.1.0",
-    "vitest": "^3.2.0"
+    "vitest": "4.1.11"
   }
 }

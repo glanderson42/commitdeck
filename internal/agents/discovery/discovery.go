@@ -249,7 +249,7 @@ func Codex(ctx context.Context) ([]Session, error) {
 		_ = cmd.Wait()
 	}()
 	enc := json.NewEncoder(in)
-	if err = enc.Encode(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]string{"name": "commitdeck", "version": "0.1.0"}}}); err != nil {
+	if err = enc.Encode(map[string]any{"id": 1, "method": "initialize", "params": map[string]any{"clientInfo": map[string]string{"name": "commitdeck", "version": "0.1.0-beta.1"}}}); err != nil {
 		return nil, err
 	}
 	scanner := bufio.NewScanner(out)

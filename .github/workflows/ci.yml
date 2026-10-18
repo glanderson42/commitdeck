@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15]
+        os: [ubuntu-22.04, macos-15, windows-2022]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -38,13 +38,40 @@ jobs:
       - name: Backend unit tests with race detection
         run: go test -race ./...
       - run: go vet ./...
-      - run: go build -o bin/commitdeck-core ./cmd/commitdeck
+      - name: Build sidecar
+        shell: bash
+        run: |
+          mkdir -p bin
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            go build -o bin/commitdeck-core.exe ./cmd/commitdeck
+          else
+            go build -o bin/commitdeck-core ./cmd/commitdeck
+          fi
       - name: Frontend unit tests
         run: npm test
+      - run: npm run test:release
       - run: npm run typecheck
       - run: npm run test:smoke
       - run: npm run test:phase3
       - run: npm run test:dev
+
+  dependencies:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   build:
     name: Desktop build (${{ matrix.name }})

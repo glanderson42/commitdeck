@@ -68,7 +68,7 @@ See [docs/architecture.md](docs/architecture.md) for domain models, provider int
 
 ## Prerequisites
 
-- Go 1.25 or newer.
+- Go 1.27.2 (pinned for patched standard-library builds).
 - Node.js 22.12+ and npm. Node 24 LTS is a good development baseline.
 - Rust stable and the platform's [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 - Git with worktree support, available on `PATH`.
@@ -81,12 +81,12 @@ The native application has been built and launched on macOS Apple Silicon. Windo
 
 ### Install a release
 
-Download the installer for your platform from the [CommitDeck v0.1.0 release](https://github.com/glanderson42/commitdeck/releases/tag/v0.1.0). These commands install the tagged release; use the source build below for Phase 3 development changes until they are published in a new release. With the GitHub CLI (`gh`) installed, these commands download and launch the installer:
+This branch prepares **v0.1.0-beta.1**. No release is published yet. Build from source below or use PR artifacts for evaluation. After maintainer-approved publication, installers will appear on the [Releases page](https://github.com/glanderson42/commitdeck/releases). The following commands apply only after that beta exists; they do not publish it. Install the GitHub CLI (`gh`) first:
 
 **macOS Apple Silicon** (use `*x64*.dmg` on Intel):
 
 ```sh
-gh release download v0.1.0 --repo glanderson42/commitdeck --pattern '*aarch64*.dmg'
+gh release download v0.1.0-beta.1 --repo glanderson42/commitdeck --pattern '*aarch64*.dmg'
 open ./*.dmg
 ```
 
@@ -95,14 +95,14 @@ In the window that opens, drag CommitDeck to Applications.
 **Windows x64** (PowerShell):
 
 ```powershell
-gh release download v0.1.0 --repo glanderson42/commitdeck --pattern '*.exe'
+gh release download v0.1.0-beta.1 --repo glanderson42/commitdeck --pattern '*.exe'
 Start-Process (Get-ChildItem *.exe | Select-Object -First 1).FullName
 ```
 
 **Debian/Ubuntu x64**:
 
 ```sh
-gh release download v0.1.0 --repo glanderson42/commitdeck --pattern '*.deb'
+gh release download v0.1.0-beta.1 --repo glanderson42/commitdeck --pattern '*.deb'
 sudo apt install ./*.deb
 ```
 
@@ -162,18 +162,11 @@ The [Release workflow](.github/workflows/release.yml) runs when a `v*` tag is pu
 | Windows x64         | NSIS setup `.exe`    |
 | Linux x64           | Debian/Ubuntu `.deb` |
 
-After committing and pushing the application and workflow, release the current version with:
+The release tag must point to a commit on `main` with successful completed main-push CI. Version files, including Cargo.lock, must agree. All four installers must exist and receive SHA-256 checksums. The workflow creates a **draft** by default; a maintainer must explicitly request publication. Existing published releases and assets are never replaced. A partial draft requires manual inspection before retrying.
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
+No tags or releases are created by local development. Follow [Release QA, signing, publication, and rollback](docs/release-qa.md) before any release. The existing `v0.1.0` tag points to the initial implementation, not this beta candidate; do not move it without explicit approval.
 
-Each platform runs Go/frontend tests and builds the desktop app with its matching Go sidecar. All four builds must succeed before the publish job creates a GitHub Release. Installers upload into a draft first, then the release is published; a failed upload leaves a recoverable draft. Version tags with a prerelease suffix (for example `v0.3.0-beta.1`) produce GitHub prereleases. Rerunning a failed workflow can finish its draft; published releases are never overwritten.
-
-The workflow uses the built-in `GITHUB_TOKEN` with `contents: write` only in the publish job; no personal access token is needed. Repository or organization policies must allow that permission. Successful installers are also retained as workflow artifacts for seven days.
-
-macOS packages use ad-hoc signing, following the [Tauri release guidance](https://v2.tauri.app/distribute/pipelines/github/). They are not Apple Developer ID signed or notarized; Windows installers are not Authenticode signed. Public trusted distribution still requires platform signing credentials. The Linux package is built on Ubuntu 22.04 and requires a distribution with compatible WebKitGTK 4.1 libraries.
+macOS defaults to ad-hoc signing; Windows defaults to unsigned. Optional signing is configured only in the Release workflow when maintainer-supplied credentials exist. PR checks never receive signing credentials. There is no updater plugin, signed update feed, or automatic update mechanism. Linux packages require compatible WebKitGTK 4.1 libraries.
 
 ## First ticket
 
@@ -224,7 +217,7 @@ In **Settings & integrations**, set:
 
 - Your Jira Cloud HTTPS base URL, for example `https://team.atlassian.net`.
 - Your Atlassian account email.
-- A Jira API token with read access to the relevant issues and comments.
+- A Jira API token with read access to the relevant issues and comments; transitions, comments and summary edits also require the corresponding Jira write permissions.
 - Optional default project key.
 
 The API token is stored under service `com.commitdeck.app`, account `jira`, using macOS Keychain, Windows Credential Manager, or Linux Secret Service. SQLite contains only the nonsecret settings and cached normalized issue data. There is no plaintext credential fallback. Leaving the token field blank retains the stored token; **Remove stored Jira token** removes it.
@@ -269,7 +262,7 @@ Attach a repository with a `github.com` `origin` remote. CommitDeck finds an ope
 | Windows | `%AppData%\commitdeck\`                     |
 | Linux   | `${XDG_CONFIG_HOME:-~/.config}/commitdeck/` |
 
-`COMMITDECK_DATA_DIR` overrides the directory. The database is `commitdeck.db`, with SQLite WAL files and `commitdeck.db.lock`. The lock is OS-managed and released on process exit; only one backend may open a data directory. Notes, tasks, integrations, and normalized agent transcripts are local data. Back up this directory while the app is closed. Tokens require a separate credential-store backup.
+`COMMITDECK_DATA_DIR` overrides the directory. The database is `commitdeck.db`, with SQLite WAL files and `commitdeck.db.lock`. The lock is OS-managed and released on process exit; only one backend may open a data directory. Notes, tasks, integrations, and normalized agent transcripts are local data. Before upgrading an existing schema, CommitDeck creates a private `commitdeck.db.pre-migration-*.db` snapshot with SQLite VACUUM INTO, including committed WAL data. Backup failure aborts migration. Backups are not automatically deleted and may contain historical sensitive content; protect them like the original database. For manual backups, close the app first and copy the directory. Tokens require a separate credential-store backup. See [backup and recovery](docs/release-qa.md#backup-and-recovery).
 
 Notes awaiting a successful write are also kept in webview local storage for crash recovery. Prompt drafts are kept there as well. Active processes are cancelled on app exit; session IDs/history survive. Sessions active during an unexpected backend exit become `idle` on startup, and pending requests expire with their old response channels. Workspace rules survive; session rules do not. Persisted PIDs are never used to kill processes from a previous app instance.
 
@@ -279,7 +272,7 @@ Workspace deletion removes application records after confirmation. It retains Gi
 
 The [PR checks workflow](.github/workflows/ci.yml) runs when a pull request is opened, updated, reopened, or marked ready for review, and on pushes to `main`. It can also run manually from Actions. New pushes cancel older checks for the same PR.
 
-- **Unit tests and smoke checks (Linux/macOS):** Go tests with the race detector, `go vet`, React/Vitest tests, TypeScript checks, and the real sidecar/development-server smoke tests.
+- **Unit tests and smoke checks (Linux/macOS/Windows):** Go tests with the race detector, `go vet`, React/Vitest tests, TypeScript checks, and the real sidecar/development-server smoke tests.
 - **Desktop builds:** macOS Apple Silicon and Intel `.dmg`, Windows x64 installer, and Linux x64 `.deb`, each with its matching Go sidecar. Installers are downloadable from the workflow's artifacts for seven days.
 
 Tests and builds report separately. PR checks use read-only repository permissions and do not require Jira, GitHub, or agent credentials. Release publication remains in the tag-triggered Release workflow. To require these checks before merging, select them in the repository's branch protection rules or ruleset after their first run.
@@ -314,7 +307,7 @@ Go tests exercise persistence, TODO order, delete cascades, archive/restart, Git
 - **Cannot create worktree:** the repository needs a commit, the base revision must exist, the branch must be valid, and it cannot already be checked out elsewhere. Existing directories are never overwritten.
 - **Cannot remove worktree:** commit or move your changes, including ignored/untracked files, cancel active agents, and close running terminals. Cleanup never forces removal or deletes the branch.
 - **Large tracked diffs are limited to 8 MB. Untracked file preview refused:** previews allow regular files up to 2 MB and reject symlinks leaving the repository. Binary content has no text diff.
-- **Unsigned app warning:** local builds are unsigned. Distribution signing/notarization is not configured yet.
+- **Unsigned app warning:** local builds are unsigned. Optional signing configuration exists; distribution credentials and native verification are still required.
 
 ## Current limits
 
