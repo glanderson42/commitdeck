@@ -54,9 +54,9 @@ PowerShell: `Get-FileHash .\CommitDeck*.exe -Algorithm SHA256` and `Get-Authenti
 
 ```sh
 sha256sum -c SHA256SUMS
-dpkg-deb --info ./commitdeck*.deb
-dpkg-deb --contents ./commitdeck*.deb
-sudo apt install ./commitdeck*.deb
+dpkg-deb --info ./CommitDeck*.deb
+dpkg-deb --contents ./CommitDeck*.deb
+sudo apt install ./CommitDeck*.deb
 ```
 
 Confirm the package contains both desktop and core binaries and its declared dependencies resolve. Launch from the desktop menu in a GUI session with Secret Service unlocked. Verify terminal `pwd`, `stty size`, Ctrl+C and cleanup. Headless Docker PTY tests do not verify WebKitGTK, desktop launch, package installation, or keyring UI.
