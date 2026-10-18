@@ -105,7 +105,7 @@ func Load(db *database.DB) ([]Row, error) {
 		}
 		i, ok := indices[s.WorkspaceID]
 		if ok {
-			rows[i].Sessions = append(rows[i].Sessions, s)
+			rows[i].Sessions = append(rows[i].Sessions, s.RedactedMetadata())
 			if s.UpdatedAt > rows[i].LastActivity {
 				rows[i].LastActivity = s.UpdatedAt
 			}

@@ -87,3 +87,27 @@ func TestAgentEventIsRedactedBeforePersistence(t *testing.T) {
 		t.Fatal(stored)
 	}
 }
+
+func TestSessionDescriptiveMetadataIsRedactedBeforePersistence(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	w, err := d.CreateWorkspace(workspace.Workspace{Title: "Ticket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := d.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex", ExternalSessionID: "native-id",
+		Title: "Investigate API_KEY=synthetic-title-value", Purpose: "custom", SourceCWD: "/repo/password=synthetic-path-value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var title, cwd string
+	if err = d.QueryRow("SELECT title,source_cwd FROM agent_sessions WHERE id=?", s.ID).Scan(&title, &cwd); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(title+cwd+s.Title+s.SourceCWD, "synthetic-") || !strings.Contains(title, "Investigate") || s.ExternalSessionID != "native-id" {
+		t.Fatal("unsafe or unusable session metadata")
+	}
+}

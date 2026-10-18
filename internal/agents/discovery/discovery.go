@@ -218,7 +218,8 @@ func (s *Service) Import(provider, id, workspaceID string) (protocol.Session, er
 		return protocol.Session{}, errors.New("session is already attached to a workspace")
 	}
 	result := protocol.Session{ID: identity.ID(), WorkspaceID: workspaceID, Provider: provider, ExternalSessionID: id, Title: d.Title, Purpose: "custom", Status: "idle", Imported: true, ResumeSupported: d.ResumeSupported, SourceCWD: d.CWD, CreatedAt: identity.Now(), UpdatedAt: identity.Now()}
-	_, err = tx.Exec("INSERT INTO agent_sessions(id,workspace_id,provider,external_session_id,title,purpose,status,created_at,updated_at,imported,resume_supported,source_cwd) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", result.ID, workspaceID, provider, id, d.Title, result.Purpose, result.Status, result.CreatedAt, result.UpdatedAt, true, d.ResumeSupported, d.CWD)
+	result = result.RedactedMetadata()
+	_, err = tx.Exec("INSERT INTO agent_sessions(id,workspace_id,provider,external_session_id,title,purpose,status,created_at,updated_at,imported,resume_supported,source_cwd) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", result.ID, workspaceID, provider, id, result.Title, result.Purpose, result.Status, result.CreatedAt, result.UpdatedAt, true, d.ResumeSupported, result.SourceCWD)
 	if err != nil {
 		return result, err
 	}

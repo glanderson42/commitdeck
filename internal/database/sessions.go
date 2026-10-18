@@ -10,6 +10,7 @@ const sessionColumns = "id,workspace_id,provider,external_session_id,title,purpo
 
 func scanSession(r scanner) (s protocol.Session, err error) {
 	err = r.Scan(&s.ID, &s.WorkspaceID, &s.Provider, &s.ExternalSessionID, &s.Title, &s.Purpose, &s.Status, &s.PID, &s.CreatedAt, &s.UpdatedAt, &s.Imported, &s.ResumeSupported, &s.SourceCWD)
+	s = s.RedactedMetadata()
 	return
 }
 func (d *DB) Sessions(id string) ([]protocol.Session, error) {
@@ -32,6 +33,7 @@ func (d *DB) Session(id string) (protocol.Session, error) {
 	return scanSession(d.QueryRow("SELECT "+sessionColumns+" FROM agent_sessions WHERE id=?", id))
 }
 func (d *DB) CreateSession(s protocol.Session) (protocol.Session, error) {
+	s = s.RedactedMetadata()
 	s.ID = workspace.ID()
 	s.CreatedAt = workspace.Now()
 	s.UpdatedAt = s.CreatedAt

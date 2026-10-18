@@ -48,6 +48,15 @@ type Session struct {
 	UpdatedAt         string `json:"updatedAt"`
 }
 
+// RedactedMetadata protects descriptive fields without changing provider IDs
+// or other values needed to resume the underlying session.
+func (s Session) RedactedMetadata() Session {
+	s.Title = redact.Text(s.Title)
+	s.Purpose = redact.Text(s.Purpose)
+	s.SourceCWD = redact.Text(s.SourceCWD)
+	return s
+}
+
 // Runtime isolates CLI arguments and wire formats from lifecycle and UI code.
 type Runtime interface {
 	ID() string

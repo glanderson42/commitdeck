@@ -99,7 +99,7 @@ func TestImportIsExplicitScopedAndDuplicateSafe(t *testing.T) {
 	defer db.Close()
 	w, _ := db.CreateWorkspace(workspace.Workspace{Title: "Import"})
 	service := New(db)
-	source := Session{Provider: "codex", ExternalSessionID: "native-123", Title: "History", CWD: "/original", ResumeSupported: false, Source: "fixture"}
+	source := Session{Provider: "codex", ExternalSessionID: "native-123", Title: "History api_key=synthetic-import-title", CWD: "/original", ResumeSupported: false, Source: "fixture"}
 	service.found[key(source)] = source
 	if _, err = service.Import("codex", "unknown", w.ID); err == nil {
 		t.Fatal("undiscovered import")
@@ -114,5 +114,9 @@ func TestImportIsExplicitScopedAndDuplicateSafe(t *testing.T) {
 	sessions, _ := db.Sessions(w.ID)
 	if len(sessions) != 1 {
 		t.Fatal(sessions)
+	}
+	var storedTitle string
+	if err = db.QueryRow("SELECT title FROM agent_sessions WHERE id=?", session.ID).Scan(&storedTitle); err != nil || strings.Contains(storedTitle, "synthetic-import-title") || strings.Contains(session.Title, "synthetic-import-title") {
+		t.Fatal("import persisted a prompt-derived credential", err)
 	}
 }
