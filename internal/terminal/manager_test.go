@@ -64,11 +64,15 @@ func TestPTYLifecycleCwdResizeAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
+	canonicalTree, err := gitservice.Canonical(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for {
 		snapshot := m.Snapshot(tab.ID)
 		b, _ := base64.StdEncoding.DecodeString(fmt.Sprint(snapshot["data"]))
 		output := strings.ToLower(strings.ReplaceAll(string(b), "\\", "/"))
-		if strings.Contains(output, strings.ToLower(filepath.ToSlash(tree))) && (runtime.GOOS == "windows" || strings.Contains(output, "42 110")) {
+		if strings.Contains(output, strings.ToLower(filepath.ToSlash(canonicalTree))) && (runtime.GOOS == "windows" || strings.Contains(output, "42 110")) {
 			break
 		}
 		if time.Now().After(deadline) {

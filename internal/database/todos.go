@@ -1,6 +1,7 @@
 package database
 
 import (
+	"commitdeck/internal/identity"
 	"commitdeck/internal/workspace"
 	"errors"
 	"strings"
@@ -31,7 +32,7 @@ func (d *DB) SaveTodo(t workspace.Todo) (workspace.Todo, error) {
 		t.UpdatedBy = "user"
 	}
 	expected := t.UpdatedAt
-	t.UpdatedAt = workspace.Now()
+	t.UpdatedAt = identity.After(expected)
 	if t.ID == "" {
 		t.ID = workspace.ID()
 		t.CreatedAt = t.UpdatedAt
@@ -79,7 +80,11 @@ func (d *DB) ReorderTodos(id string, ids []string) error {
 			return errors.New("duplicate task in ordering")
 		}
 		seen[tid] = true
-		r, e := tx.Exec("UPDATE todos SET position=?,updated_at=? WHERE id=? AND workspace_id=?", i, workspace.Now(), tid, id)
+		var previous string
+		if err = tx.QueryRow("SELECT updated_at FROM todos WHERE id=? AND workspace_id=?", tid, id).Scan(&previous); err != nil {
+			return err
+		}
+		r, e := tx.Exec("UPDATE todos SET position=?,updated_at=? WHERE id=? AND workspace_id=?", i, identity.After(previous), tid, id)
 		if e = changed(r, e); e != nil {
 			return e
 		}

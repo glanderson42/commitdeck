@@ -75,7 +75,7 @@ See [docs/architecture.md](docs/architecture.md) for domain models, provider int
 - macOS: Xcode Command Line Tools. Windows: MSVC build tools and WebView2. Linux: WebKitGTK/system packages listed by Tauri and a running Secret Service for credentials.
 - Optional integrations: `codex`, `claude`, `opencode`, and `gh`, independently installed and authenticated.
 
-The native application has been built and launched on macOS Apple Silicon. Windows and Linux code paths are included; native runtime and packaging on those platforms still require verification.
+The native application has been built and launched on macOS Apple Silicon. CI builds Windows x64 and Linux x64 installers. Native installation, desktop/keyring behavior and uninstall checks on those systems still require the explicit QA matrix in `docs/release-qa.md`; compilation and headless tests are separate evidence.
 
 ## Installation and local development
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"commitdeck/internal/identity"
 	"commitdeck/internal/workspace"
 )
 
@@ -125,7 +126,11 @@ func (d *DB) SaveNote(id, content string) error {
 	if len(content) > 4<<20 {
 		return errors.New("note exceeds 4 MB")
 	}
-	r, err := d.Exec("UPDATE notes SET content=?,updated_at=?,updated_by='user',session_id='' WHERE workspace_id=?", content, workspace.Now(), id)
+	n, err := d.Note(id)
+	if err != nil {
+		return err
+	}
+	r, err := d.Exec("UPDATE notes SET content=?,updated_at=?,updated_by='user',session_id='' WHERE workspace_id=?", content, identity.After(n.UpdatedAt), id)
 	return changed(r, err)
 }
 func (d *DB) Setting(key string) (string, error) {
@@ -146,7 +151,11 @@ func (d *DB) SaveNoteIfUnchanged(id, content, expected string) error {
 	if len(content) > 4<<20 {
 		return errors.New("note exceeds 4 MB")
 	}
-	result, err := d.Exec("UPDATE notes SET content=?,updated_at=?,updated_by='user',session_id='' WHERE workspace_id=? AND content=?", content, workspace.Now(), id, expected)
+	note, err := d.Note(id)
+	if err != nil {
+		return err
+	}
+	result, err := d.Exec("UPDATE notes SET content=?,updated_at=?,updated_by='user',session_id='' WHERE workspace_id=? AND content=?", content, identity.After(note.UpdatedAt), id, expected)
 	if err != nil {
 		return err
 	}

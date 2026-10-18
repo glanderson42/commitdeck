@@ -299,7 +299,7 @@ func (s *Service) Call(ctx context.Context, session protocol.Session, p Request)
 		if len(content) > 4<<20 {
 			return nil, errors.New("note exceeds 4 MB")
 		}
-		updated, updateErr := s.DB.Exec("UPDATE notes SET content=?,updated_at=?,updated_by=?,session_id=? WHERE workspace_id=? AND content=?", content, identity.Now(), session.Provider, session.ID, w.ID, n.Content)
+		updated, updateErr := s.DB.Exec("UPDATE notes SET content=?,updated_at=?,updated_by=?,session_id=? WHERE workspace_id=? AND content=?", content, identity.After(n.UpdatedAt), session.Provider, session.ID, w.ID, n.Content)
 		err = updateErr
 		if err == nil {
 			count, _ := updated.RowsAffected()

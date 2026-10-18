@@ -140,15 +140,19 @@ func TestConcurrentSessionsAndCancellation(t *testing.T) {
 	}
 	s, _ := db.Session(sessions[0].ID)
 	w, _ := db.Workspace(s.WorkspaceID)
-	canonical, _ := filepath.EvalSymlinks(w.WorktreePath)
+	wanted, err := os.Stat(w.WorktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	found := false
 	for _, e := range events {
-		if e.Text == canonical {
+		actual, statErr := os.Stat(e.Text)
+		if statErr == nil && os.SameFile(wanted, actual) {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("agent cwd mismatch: want %s, events %+v", canonical, events)
+		t.Fatalf("agent cwd mismatch: want %s, events %+v", w.WorktreePath, events)
 	}
 	if s.ExternalSessionID != "external-1" {
 		t.Fatal("resume ID not persisted")
