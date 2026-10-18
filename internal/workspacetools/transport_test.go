@@ -162,6 +162,62 @@ func TestToolFailuresHaveErrorStatus(t *testing.T) {
 	}
 }
 
+func TestToolTransportSupportsDocumentedNoteLimit(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	w, err := db.CreateWorkspace(workspace.Workspace{Title: "Large note"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := db.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &activity.Service{Store: db}
+	s, _ := New(db, permissions.New(db, a, nil), a)
+	defer s.Close()
+	// Exercise the full HTTP handler without opening another listener.
+	s.url = "http://127.0.0.1:12345"
+	s.bindings["synthetic"] = binding{session, context.Background()}
+	post := func(body []byte) int {
+		r := httptest.NewRequest("POST", s.url+"/tool", bytes.NewReader(body))
+		r.Header.Set("Authorization", "Bearer synthetic")
+		res := httptest.NewRecorder()
+		s.ServeHTTP(res, r)
+		return res.Code
+	}
+	for _, content := range []string{strings.Repeat("界", 30000), strings.Repeat("<", (4<<20)-2)} {
+		if err = db.SaveNote(w.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(Request{Operation: "notes.append", Content: content})
+		if code := post(body); code != http.StatusOK {
+			t.Fatalf("valid %d-byte note rejected by transport: %d", len(content), code)
+		}
+		note, err := db.Note(w.ID)
+		if err != nil || !strings.Contains(note.Content, content) {
+			t.Fatal("note not written", err)
+		}
+	}
+	if err = db.SaveNote(w.ID, "Unchanged"); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(Request{Operation: "notes.append", Content: strings.Repeat("x", 4<<20)})
+	if code := post(body); code != http.StatusUnprocessableEntity {
+		t.Fatalf("oversize note accepted: %d", code)
+	}
+	if code := post([]byte(strings.Repeat(" ", maxToolJSONBytes+1))); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize transport not rejected explicitly: %d", code)
+	}
+	note, err := db.Note(w.ID)
+	if err != nil || note.Content != "Unchanged" {
+		t.Fatal("failed operation modified note", err)
+	}
+}
+
 func TestHelperSubprocess(t *testing.T) {
 	if os.Getenv("COMMITDECK_HELPER_TEST") == "" {
 		return

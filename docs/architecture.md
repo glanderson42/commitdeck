@@ -79,6 +79,8 @@ Normalized event text, commands, file paths, diffs, tool names, and errors pass 
 
 Prompt editing and ticket switching retain the full draft in memory. Webview recovery copies pass through the same backend redactor before local storage; unavailable sanitization pauses backup rather than writing raw input. Older drafts are sanitized when the Agent pane opens and the backend is available. Restored copies may therefore contain redaction markers; actual sending still uses the current in-memory prompt the user reviewed.
 
+Context redaction runs again after assembly and budget clipping so section boundaries cannot make otherwise valid previews fail snapshot validation. GitHub writes snapshot local workspace/repository state under the lifecycle lock, then release it before network calls; unrelated workspace, agent and terminal operations remain available. The workspace-tool HTTP envelope allows the worst-case JSON expansion of a 4 MiB note and rejects larger bodies with HTTP 413; the note content limit remains 4 MiB.
+
 New timestamps use fixed nanosecond precision and an atomic monotonic sequence, including on Windows clocks with coarse resolution. TODO/notes updates advance beyond the persisted revision so clock rollback or restart cannot reuse that optimistic-concurrency token. These remain RFC 3339 timestamps; existing values require no migration.
 
 ## Permission workflow

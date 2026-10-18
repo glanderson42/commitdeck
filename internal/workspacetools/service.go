@@ -110,6 +110,9 @@ var (
 	ErrOperation = errors.New("unsupported workspace tool")
 )
 
+// A 4 MiB note may expand sixfold in JSON (for example, escaped '<' bytes).
+const maxToolJSONBytes = 6*(4<<20) + (64 << 10)
+
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" || r.URL.Path != "/tool" || r.Header.Get("Origin") != "" || r.Host != strings.TrimPrefix(s.url, "http://") {
 		http.Error(w, "forbidden", 403)
@@ -128,8 +131,23 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p Request
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&p); err != nil {
-		http.Error(w, "invalid request", 400)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxToolJSONBytes))
+	err := decoder.Decode(&p)
+	if err == nil {
+		var trailing any
+		if err = decoder.Decode(&trailing); err == io.EOF {
+			err = nil
+		} else if err == nil {
+			err = errors.New("multiple request values")
+		}
+	}
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "workspace tool request exceeds its size limit", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+		}
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -363,7 +381,7 @@ func RunHelper(ctx context.Context, operation, body string) error {
 		return errors.New("workspace tool connection unavailable")
 	}
 	defer res.Body.Close()
-	b, err = io.ReadAll(io.LimitReader(res.Body, 5<<20))
+	b, err = io.ReadAll(io.LimitReader(res.Body, maxToolJSONBytes))
 	if err != nil {
 		return errors.New("workspace tool response unavailable")
 	}

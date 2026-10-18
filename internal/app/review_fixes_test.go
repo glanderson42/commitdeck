@@ -14,7 +14,105 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+type blockingPRProvider struct {
+	pullrequest.PullRequestService
+	stage   string
+	started chan struct{}
+	release chan struct{}
+	finds   atomic.Int32
+}
+
+func (p *blockingPRProvider) wait(ctx context.Context) error {
+	close(p.started)
+	select {
+	case <-p.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (p *blockingPRProvider) FindForBranch(ctx context.Context, _ git.Repository, _ string) (*pullrequest.PullRequest, error) {
+	n := p.finds.Add(1)
+	if (p.stage == "find" && n == 1) || (p.stage == "refresh" && n == 2) {
+		if err := p.wait(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return &pullrequest.PullRequest{Number: 1, State: "OPEN"}, nil
+}
+func (p *blockingPRProvider) Write(ctx context.Context, _ git.Repository, _ *pullrequest.PullRequest, _ pullrequest.Action) (string, error) {
+	if p.stage == "write" {
+		if err := p.wait(ctx); err != nil {
+			return "", err
+		}
+	}
+	return "https://github.com/example/repo/pull/1", nil
+}
+
+func TestRemotePRCallsDoNotBlockOtherWorkspaceLifecycle(t *testing.T) {
+	for _, stage := range []string{"find", "write", "refresh"} {
+		t.Run(stage, func(t *testing.T) {
+			a, err := Open(t.TempDir(), func(any) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer a.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			repo := t.TempDir()
+			if b, err := exec.Command("git", "init", repo).CombinedOutput(); err != nil {
+				t.Fatal(string(b), err)
+			}
+			w, err := a.DB.CreateWorkspace(workspace.Workspace{Title: "Remote", RepoPath: repo})
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := a.DB.CreateWorkspace(workspace.Workspace{Title: "Local"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := &blockingPRProvider{stage: stage, started: make(chan struct{}), release: make(chan struct{})}
+			a.PR = provider
+			params, _ := json.Marshal(map[string]any{"id": w.ID, "action": "comment", "body": "Test", "confirm": true})
+			done := make(chan error, 1)
+			go func() {
+				_, err := a.Call(ctx, "pr.write", params)
+				done <- err
+			}()
+			select {
+			case <-provider.started:
+			case <-ctx.Done():
+				t.Fatal("remote fixture did not start")
+			}
+			archived := make(chan error, 1)
+			go func() {
+				params, _ := json.Marshal(map[string]any{"id": other.ID, "archived": true})
+				_, err := a.Call(ctx, "workspace.archive", params)
+				archived <- err
+			}()
+			var blocked bool
+			select {
+			case err := <-archived:
+				if err != nil {
+					t.Error(err)
+				}
+			case <-time.After(2 * time.Second):
+				blocked = true
+				t.Error("unrelated workspace blocked by GitHub network call")
+			}
+			close(provider.release)
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+			if blocked {
+				<-archived
+			}
+		})
+	}
+}
 
 func TestJiraWriteSuccessSurvivesRefreshFailures(t *testing.T) {
 	for _, stage := range []string{"cache", "workspace", "fetch", "remote"} {

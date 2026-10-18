@@ -200,8 +200,6 @@ func (a *App) daily(ctx context.Context, method string, raw json.RawMessage) (an
 		}
 		return map[string]string{"title": strings.TrimSpace(w.ExternalKey + " " + w.Title), "body": body, "base": base, "baseSource": source}, nil
 	case "pr.write":
-		a.lifecycle.Lock()
-		defer a.lifecycle.Unlock()
 		var action pullrequest.Action
 		if err := json.Unmarshal(raw, &action); err != nil {
 			return nil, err
@@ -209,14 +207,21 @@ func (a *App) daily(ctx context.Context, method string, raw json.RawMessage) (an
 		if !action.Confirm {
 			return nil, errors.New("review and confirm this GitHub action")
 		}
-		w, err := a.DB.Workspace(p.ID)
-		if err != nil {
-			return nil, err
-		}
-		if w.Archived {
-			return nil, errors.New("restore workspace before remote actions")
-		}
-		repo, err := a.Git.Status(workingPath(w))
+		// Snapshot local state under the lifecycle lock. Network operations must
+		// not block unrelated agent, terminal or workspace lifecycle requests.
+		w, repo, err := func() (workspace.Workspace, *gitservice.Repository, error) {
+			a.lifecycle.Lock()
+			defer a.lifecycle.Unlock()
+			w, err := a.DB.Workspace(p.ID)
+			if err != nil {
+				return w, nil, err
+			}
+			if w.Archived {
+				return w, nil, errors.New("restore workspace before remote actions")
+			}
+			repo, err := a.Git.Status(workingPath(w))
+			return w, repo, err
+		}()
 		if err != nil {
 			return nil, err
 		}

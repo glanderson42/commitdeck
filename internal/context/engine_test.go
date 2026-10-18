@@ -6,6 +6,7 @@ import (
 	gitservice "commitdeck/internal/git"
 	"commitdeck/internal/issuetracker"
 	"commitdeck/internal/pullrequest"
+	"commitdeck/internal/redact"
 	"commitdeck/internal/workspace"
 	"context"
 	"os"
@@ -163,6 +164,39 @@ func TestSnapshotRejectsUnredactedCredentials(t *testing.T) {
 	var count int
 	if err = e.DB.QueryRow("SELECT COUNT(*) FROM agent_session_context").Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
+	}
+}
+
+func TestAssembledContextCanBeSavedAtCredentialBoundaries(t *testing.T) {
+	for _, purpose := range []string{"implementation", "review", "testing", "investigation"} {
+		t.Run(purpose, func(t *testing.T) {
+			e, w := fixture(t)
+			if err := e.DB.SaveNote(w.ID, "Keep the diagnosis.\nGITHUB_TOKEN="); err != nil {
+				t.Fatal(err)
+			}
+			s, err := e.DB.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex", Title: "Boundary", Purpose: purpose})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, budget := range []int{1200, 3000, 12000} {
+				opts := Defaults()
+				opts.MaxCharacters = budget
+				c, err := e.BuildWorkspaceContext(context.Background(), w.ID, opts, purpose)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if redact.Text(c.Markdown) != c.Markdown || c.CharacterCount != len([]rune(c.Markdown)) || c.CharacterCount > budget {
+					t.Fatalf("unsafe or over-budget assembled document (%s, %d)", purpose, budget)
+				}
+				if err = e.Save(s, c); err != nil {
+					t.Fatalf("rendered context rejected: %v", err)
+				}
+				stored, err := e.Snapshot(s.ID)
+				if err != nil || stored.Hash != c.Hash || stored.Markdown != c.Markdown {
+					t.Fatal("snapshot differs from preview", err)
+				}
+			}
+		})
 	}
 }
 

@@ -244,7 +244,9 @@ func (c *WorkspaceContext) Render() {
 	if feedback != "" && contains(c.Truncated, "Unresolved PR Feedback") {
 		b.WriteString("\nWARNING: Unresolved review feedback is incomplete. Open PR feedback before acting.\n")
 	}
-	c.Markdown = b.String()
+	// Fragments can form a new credential-shaped pattern at their boundary.
+	// Redact the assembled document, not just the individual source bodies.
+	c.Markdown = redact.Text(b.String())
 	if len([]rune(c.Markdown)) > maxChars { // Markers are retained even at the minimum budget.
 		notice := "\n\n[CONTEXT TRUNCATED TO BUDGET. Unresolved feedback may be incomplete; inspect PR and source tabs.]\n"
 		c.Markdown = clip(c.Markdown, maxChars-len([]rune(notice))) + notice
@@ -252,6 +254,7 @@ func (c *WorkspaceContext) Render() {
 			c.Truncated = append(c.Truncated, "Budget")
 		}
 	}
+	c.Markdown = redact.Text(c.Markdown)
 	c.CharacterCount = len([]rune(c.Markdown))
 	c.EstimatedTokens = (len(c.Markdown) + 3) / 4
 	sum := sha256.Sum256([]byte(c.Markdown))
