@@ -78,7 +78,7 @@ func (d *DB) Events(id string) ([]protocol.Event, error) {
 		if err = json.Unmarshal([]byte(b), &e); err != nil {
 			return nil, err
 		}
-		events = append(events, e)
+		events = append(events, e.Redacted())
 	}
 	return events, r.Err()
 }

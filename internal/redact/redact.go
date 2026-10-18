@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/json"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -11,8 +12,41 @@ var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)`),
 	regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`),
 	regexp.MustCompile(`\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|github_pat_[A-Za-z0-9_]{16,}|AKIA[A-Z0-9]{16})\b`),
-	regexp.MustCompile(`(?im)\b[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|PASSWORD|PASSWD|SECRET)[A-Z0-9_]*\s*[:=]\s*[^\s\n]+`),
+	regexp.MustCompile(`(?im)["']?\b[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|PASSWORD|PASSWD|SECRET)[A-Z0-9_]*["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\n,}]+)`),
+	regexp.MustCompile(`(?i)--(?:api-key|token|password|secret)(?:=|\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s]+)`),
+	regexp.MustCompile(`(?i)\bBasic\s+[A-Za-z0-9+/=]{8,}`),
 	regexp.MustCompile(`https?://[^\s<>"']+`),
+}
+
+// JSON preserves structure while stripping known secret fields and text patterns.
+func JSON(raw json.RawMessage) json.RawMessage {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return json.RawMessage(`{}`)
+	}
+	var walk func(any) any
+	walk = func(v any) any {
+		switch x := v.(type) {
+		case string:
+			return Text(x)
+		case []any:
+			for i := range x {
+				x[i] = walk(x[i])
+			}
+		case map[string]any:
+			for k, child := range x {
+				lower := strings.ToLower(k)
+				if strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") || lower == "authorization" {
+					x[k] = "[REDACTED]"
+				} else {
+					x[k] = walk(child)
+				}
+			}
+		}
+		return v
+	}
+	b, _ := json.Marshal(walk(value))
+	return b
 }
 
 func Text(s string) string {

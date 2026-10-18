@@ -43,7 +43,13 @@ func Open(path string) (*DB, error) {
 		unlockFile(lock)
 		return nil, err
 	}
+	info, err := f.Stat()
 	f.Close()
+	if err != nil {
+		unlockFile(lock)
+		return nil, err
+	}
+	existing := info.Size() > 0
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		unlockFile(lock)
@@ -60,6 +66,7 @@ func Open(path string) (*DB, error) {
 		return fail(err)
 	}
 	entries, _ := migrations.ReadDir("migrations")
+	backedUp := false
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	for _, e := range entries {
 		v, _ := strconv.Atoi(strings.Split(e.Name(), "_")[0])
@@ -69,6 +76,12 @@ func Open(path string) (*DB, error) {
 		}
 		if count > 0 {
 			continue
+		}
+		if existing && !backedUp {
+			if _, err = backupDatabase(db, path); err != nil {
+				return fail(fmt.Errorf("pre-migration backup failed; database not migrated: %w", err))
+			}
+			backedUp = true
 		}
 		body, err := migrations.ReadFile("migrations/" + e.Name())
 		if err != nil {

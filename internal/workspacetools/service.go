@@ -104,6 +104,12 @@ type Request struct {
 	ExpectedUpdatedAt string `json:"expectedUpdatedAt"`
 }
 
+var (
+	ErrDenied    = errors.New("workspace edit denied")
+	ErrConflict  = errors.New("workspace content changed; refresh before retrying")
+	ErrOperation = errors.New("unsupported workspace tool")
+)
+
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" || r.URL.Path != "/tool" || r.Header.Get("Origin") != "" || r.Host != strings.TrimPrefix(s.url, "http://") {
 		http.Error(w, "forbidden", 403)
@@ -133,7 +139,19 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	v, err := s.Call(ctx, b.session, p)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		status, message := http.StatusUnprocessableEntity, "workspace operation failed; refresh and check the input before retrying"
+		switch {
+		case errors.Is(err, ErrDenied):
+			status, message = http.StatusForbidden, ErrDenied.Error()
+		case errors.Is(err, ErrConflict):
+			status, message = http.StatusConflict, ErrConflict.Error()
+		case errors.Is(err, ErrOperation):
+			status, message = http.StatusBadRequest, ErrOperation.Error()
+		case ctx.Err() != nil:
+			status, message = http.StatusRequestTimeout, "workspace operation cancelled"
+		}
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": message})
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"result": v})
@@ -172,7 +190,7 @@ func (s *Service) approve(ctx context.Context, session protocol.Session, p *Requ
 	select {
 	case allow := <-ch:
 		if !allow {
-			return errors.New("workspace edit denied")
+			return ErrDenied
 		}
 		return nil
 	case <-ctx.Done():
@@ -240,7 +258,7 @@ func (s *Service) Call(ctx context.Context, session protocol.Session, p Request)
 				count, e := deleted.RowsAffected()
 				err = e
 				if err == nil && count != 1 {
-					err = errors.New("task changed after approval; request a fresh deletion approval")
+					err = ErrConflict
 				}
 			}
 			target = p.ID
@@ -276,7 +294,7 @@ func (s *Service) Call(ctx context.Context, session protocol.Session, p Request)
 		if p.Operation == "notes.append" {
 			content = strings.TrimRight(n.Content, "\n") + "\n\n" + content
 		} else if p.ExpectedUpdatedAt == "" || p.ExpectedUpdatedAt != n.UpdatedAt {
-			return nil, errors.New("notes changed; read them again before replacing")
+			return nil, ErrConflict
 		}
 		if len(content) > 4<<20 {
 			return nil, errors.New("note exceeds 4 MB")
@@ -286,7 +304,7 @@ func (s *Service) Call(ctx context.Context, session protocol.Session, p Request)
 		if err == nil {
 			count, _ := updated.RowsAffected()
 			if count == 0 {
-				err = errors.New("notes changed during edit; read the latest note and retry")
+				err = ErrConflict
 			}
 		}
 		target = n.ID
@@ -301,7 +319,7 @@ func (s *Service) Call(ctx context.Context, session protocol.Session, p Request)
 		}
 		title = p.Content
 	default:
-		return nil, errors.New("unsupported workspace tool")
+		return nil, ErrOperation
 	}
 	if err != nil {
 		return nil, err
@@ -345,12 +363,20 @@ func RunHelper(ctx context.Context, operation, body string) error {
 		return errors.New("workspace tool connection unavailable")
 	}
 	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return errors.New("workspace tool capability expired or request refused")
-	}
 	b, err = io.ReadAll(io.LimitReader(res.Body, 5<<20))
 	if err != nil {
-		return err
+		return errors.New("workspace tool response unavailable")
+	}
+	var response struct {
+		Error  string          `json:"error"`
+		Result json.RawMessage `json:"result"`
+	}
+	decodeErr := json.Unmarshal(b, &response)
+	if res.StatusCode != http.StatusOK || response.Error != "" {
+		return errors.New("workspace tool failed or capability expired; check the operation in CommitDeck")
+	}
+	if decodeErr != nil || len(response.Result) == 0 {
+		return errors.New("invalid workspace tool response")
 	}
 	_, err = os.Stdout.Write(append(b, '\n'))
 	return err

@@ -150,6 +150,22 @@ func TestSnapshotInjectionAndExplicitRefresh(t *testing.T) {
 	}
 }
 
+func TestSnapshotRejectsUnredactedCredentials(t *testing.T) {
+	e, w := fixture(t)
+	s, err := e.DB.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex", Title: "Testing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &WorkspaceContext{Markdown: `API_KEY="synthetic-context-value"`}
+	if err = e.Save(s, c); err == nil {
+		t.Fatal("unredacted snapshot accepted")
+	}
+	var count int
+	if err = e.DB.QueryRow("SELECT COUNT(*) FROM agent_session_context").Scan(&count); err != nil || count != 0 {
+		t.Fatal(count, err)
+	}
+}
+
 func TestLegacySessionDoesNotReceiveHiddenContext(t *testing.T) {
 	e, w := fixture(t)
 	s, err := e.DB.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex", ExternalSessionID: "existing"})

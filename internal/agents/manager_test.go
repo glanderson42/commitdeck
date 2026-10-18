@@ -175,3 +175,51 @@ func waitStatus(t *testing.T, db *database.DB, id, want string) {
 	s, _ := db.Session(id)
 	t.Fatalf("want %s, got %+v", want, s)
 }
+
+func TestRawUserPromptIsNotPersisted(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	m := New(db, func(any) {})
+	m.providers["fake"] = fakeRuntime{}
+	defer m.Close()
+	dir := t.TempDir()
+	if b, e := exec.Command("git", "init", dir).CombinedOutput(); e != nil {
+		t.Fatal(string(b), e)
+	}
+	w, err := db.CreateWorkspace(workspace.Workspace{Title: "Ticket", WorktreePath: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.StartSession(context.Background(), w, SessionOptions{Provider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Send(context.Background(), s.ID, `Investigate retries. {"api_key":"synthetic-prompt-value"}`); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, db, s.ID, "completed")
+	var payload string
+	rows, err := db.Query("SELECT payload FROM agent_events WHERE session_id=?", s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		if err = rows.Scan(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(payload, "synthetic-prompt-value") {
+			t.Fatal("raw prompt persisted")
+		}
+		if strings.Contains(payload, "Investigate retries") {
+			found = true
+		}
+	}
+	if err = rows.Err(); err != nil || !found {
+		t.Fatal("useful prompt missing", err)
+	}
+}

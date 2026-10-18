@@ -43,8 +43,9 @@ createInterface({input:process.stdin}).on('line',async line=>{const value=JSON.p
  if(!added.result?.id)throw Error('TODO tool did not return an ID');
  await tool('todo.complete',{id:added.result.id,completed:true});
  await tool('notes.append',{content:'Fixture decision: preserve stable invoice IDs.'});
- const denied=await tool('todo.delete',{id:added.result.id});
- if(!denied.error)throw Error('Destructive workspace edit bypassed approval');
+ let denied=false;
+ try{await tool('todo.delete',{id:added.result.id})}catch(error){denied=error.code===1}
+ if(!denied)throw Error('Destructive workspace edit did not fail with a nonzero exit');
  output({type:'assistant',session_id:'fixture-native-'+process.pid,message:{content:[{type:'text',text:'Findings: stable invoice ID. TODO completed and decision recorded. No repository tests were run by this fixture.'}]}});
  output({type:'result',session_id:'fixture-native-'+process.pid,is_error:false});
  }catch(error){output({type:'result',is_error:true,result:error.message})}}
