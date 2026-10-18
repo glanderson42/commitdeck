@@ -17,7 +17,8 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { promptDrafts } from "../../store/prompts";
 import { Markdown } from "../../components/Markdown";
 import { Empty, ErrorBox } from "../../components/ui";
 import { message, rpc } from "../../services/api";
@@ -108,28 +109,17 @@ export function AgentPane({
   const [showNew, setShowNew] = useState(false);
   const [provider, setProvider] = useState("codex");
   const [showContext, setShowContext] = useState(false);
-  const [prompts, setPrompts] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(
-        window.localStorage.getItem("commitdeck.prompts") || "{}",
-      );
-    } catch {
-      return {};
-    }
-  });
+  const prompts = useSyncExternalStore(
+    promptDrafts.subscribe,
+    promptDrafts.get,
+  );
+  const setPrompts = promptDrafts.set;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [visible, setVisible] = useState(200);
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        "commitdeck.prompts",
-        JSON.stringify(prompts),
-      );
-    } catch {
-      /* Prompt remains available for this session. */
-    }
-  }, [prompts]);
+    void promptDrafts.persist();
+  }, []);
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const requestHandled = useRef("");
@@ -358,6 +348,10 @@ export function AgentPane({
                     (!!session.imported && !session.resumeSupported)
                   }
                 />
+                <p className="hint">
+                  Recovery copies redact recognized credentials. Keep secrets
+                  out of prompts.
+                </p>
                 <div className="composer-bottom">
                   <span>
                     <span

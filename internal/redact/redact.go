@@ -34,14 +34,16 @@ func JSON(raw json.RawMessage) json.RawMessage {
 				x[i] = walk(x[i])
 			}
 		case map[string]any:
+			safe := make(map[string]any, len(x))
 			for k, child := range x {
 				lower := strings.ToLower(k)
 				if strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "api_key") || lower == "authorization" {
-					x[k] = "[REDACTED]"
+					safe[Text(k)] = "[REDACTED]"
 				} else {
-					x[k] = walk(child)
+					safe[Text(k)] = walk(child)
 				}
 			}
+			return safe
 		}
 		return v
 	}

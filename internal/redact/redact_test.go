@@ -20,7 +20,7 @@ func TestRedaction(t *testing.T) {
 }
 
 func TestQuotedCredentialsAndStructuredMetadata(t *testing.T) {
-	raw := `{"api_key":"synthetic-json-value","message":"password='synthetic spaced value'","nested":{"Authorization":"Basic c3ludGhldGljOnRlc3Q="},"safe":"diagnostic remains"}`
+	raw := `{"api_key":"synthetic-json-value","password=synthetic-in-key":"ignored","message":"password='synthetic spaced value'","nested":{"Authorization":"Basic c3ludGhldGljOnRlc3Q="},"safe":"diagnostic remains"}`
 	out := JSON(json.RawMessage(raw))
 	if !json.Valid(out) || strings.Contains(string(out), "synthetic") || !strings.Contains(string(out), "diagnostic remains") {
 		t.Fatal(string(out))

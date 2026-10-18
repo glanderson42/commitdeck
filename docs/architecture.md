@@ -77,6 +77,8 @@ Supported UI events remain `text`, `status`, `command`, `tool`, `file_changed`, 
 
 Normalized event text, commands, file paths, diffs, tool names, and errors pass through secret-pattern redaction before streaming and before insertion into SQLite. Database insertion enforces this even for callers outside the agent manager. Redaction is best effort for recognized patterns; this does not scrub historical rows or guarantee detection of arbitrary secrets. Provider permission replies keep their original runtime inputs.
 
+Prompt editing and ticket switching retain the full draft in memory. Webview recovery copies pass through the same backend redactor before local storage; unavailable sanitization pauses backup rather than writing raw input. Older drafts are sanitized when the Agent pane opens and the backend is available. Restored copies may therefore contain redaction markers; actual sending still uses the current in-memory prompt the user reviewed.
+
 New timestamps use fixed nanosecond precision and an atomic monotonic sequence, including on Windows clocks with coarse resolution. TODO/notes updates advance beyond the persisted revision so clock rollback or restart cannot reuse that optimistic-concurrency token. These remain RFC 3339 timestamps; existing values require no migration.
 
 ## Permission workflow

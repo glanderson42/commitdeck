@@ -21,6 +21,7 @@ import (
 	"commitdeck/internal/issuetracker"
 	"commitdeck/internal/jira"
 	"commitdeck/internal/pullrequest"
+	"commitdeck/internal/redact"
 	"commitdeck/internal/secrets"
 	"commitdeck/internal/terminal"
 	"commitdeck/internal/workflows"
@@ -235,23 +236,24 @@ func (a *App) detail(id string) (any, error) {
 }
 func (a *App) Call(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p struct {
-		ID              string   `json:"id"`
-		WorkspaceID     string   `json:"workspaceId"`
-		ExpectedContent *string  `json:"expectedContent"`
-		ExpectedHash    string   `json:"expectedHash"`
-		Content         string   `json:"content"`
-		IDs             []string `json:"ids"`
-		File            string   `json:"file"`
-		Path            string   `json:"path"`
-		Branch          string   `json:"branch"`
-		Base            string   `json:"base"`
-		Key             string   `json:"key"`
-		Token           string   `json:"token"`
-		Confirm         bool     `json:"confirm"`
-		Archived        bool     `json:"archived"`
-		Prompt          string   `json:"prompt"`
-		Action          string   `json:"action"`
-		Settings        Settings `json:"settings"`
+		ID              string            `json:"id"`
+		WorkspaceID     string            `json:"workspaceId"`
+		ExpectedContent *string           `json:"expectedContent"`
+		ExpectedHash    string            `json:"expectedHash"`
+		Content         string            `json:"content"`
+		IDs             []string          `json:"ids"`
+		File            string            `json:"file"`
+		Path            string            `json:"path"`
+		Branch          string            `json:"branch"`
+		Base            string            `json:"base"`
+		Key             string            `json:"key"`
+		Token           string            `json:"token"`
+		Confirm         bool              `json:"confirm"`
+		Archived        bool              `json:"archived"`
+		Prompt          string            `json:"prompt"`
+		Action          string            `json:"action"`
+		Settings        Settings          `json:"settings"`
+		Drafts          map[string]string `json:"drafts"`
 	}
 	if err := decode(raw, &p); err != nil {
 		return nil, errors.New("invalid request")
@@ -263,6 +265,18 @@ func (a *App) Call(ctx context.Context, method string, raw json.RawMessage) (any
 		return a.terminalCall(ctx, method, raw)
 	}
 	switch method {
+	case "drafts.redact":
+		if len(p.Drafts) > 500 || len(raw) > 4<<20 {
+			return nil, errors.New("prompt recovery backup exceeds its size limit")
+		}
+		out := make(map[string]string, len(p.Drafts))
+		for id, content := range p.Drafts {
+			if len(id) > 128 || len(content) > 1<<20 {
+				return nil, errors.New("invalid prompt recovery draft")
+			}
+			out[id] = redact.Text(content)
+		}
+		return out, nil
 	case "bootstrap":
 		return a.bootstrap()
 	case "workspace.get":
