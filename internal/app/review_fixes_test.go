@@ -114,6 +114,50 @@ func TestRemotePRCallsDoNotBlockOtherWorkspaceLifecycle(t *testing.T) {
 	}
 }
 
+func TestPRRefreshCannotResurrectArchivedWorkspace(t *testing.T) {
+	a, err := Open(t.TempDir(), func(any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	repo := t.TempDir()
+	if b, e := exec.Command("git", "init", repo).CombinedOutput(); e != nil {
+		t.Fatal(string(b), e)
+	}
+	w, err := a.DB.CreateWorkspace(workspace.Workspace{Title: "Archive race", RepoPath: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &blockingPRProvider{stage: "write", started: make(chan struct{}), release: make(chan struct{})}
+	a.PR = provider
+	params, _ := json.Marshal(map[string]any{"id": w.ID, "action": "comment", "body": "Test", "confirm": true})
+	done := make(chan error, 1)
+	go func() {
+		_, e := a.Call(ctx, "pr.write", params)
+		done <- e
+	}()
+	select {
+	case <-provider.started:
+	case <-ctx.Done():
+		t.Fatal("GitHub write did not start")
+	}
+	archiveParams, _ := json.Marshal(map[string]any{"id": w.ID, "archived": true})
+	if _, err = a.Call(ctx, "workspace.archive", archiveParams); err != nil {
+		close(provider.release)
+		t.Fatal("archive failed while remote write was in flight:", err)
+	}
+	close(provider.release)
+	if err = <-done; err != nil {
+		t.Fatal("PR write failed:", err)
+	}
+	stored, err := a.DB.Workspace(w.ID)
+	if err != nil || !stored.Archived || stored.Lifecycle != "ARCHIVED" {
+		t.Fatalf("PR refresh overwrote archive state: %+v, %v", stored, err)
+	}
+}
+
 func TestJiraWriteSuccessSurvivesRefreshFailures(t *testing.T) {
 	for _, stage := range []string{"cache", "workspace", "fetch", "remote"} {
 		t.Run(stage, func(t *testing.T) {
