@@ -9,7 +9,8 @@ export function devCore(): Plugin {
   return {
     name: "commitdeck-core",
     apply: "serve",
-    configureServer(server) {
+    async configureServer(server) {
+      await closeCore?.();
       if (server.config.mode === "desktop" || process.env.VITEST) return;
       const child = spawn(
         `./bin/commitdeck-core${process.platform === "win32" ? ".exe" : ""}`,
@@ -28,7 +29,7 @@ export function devCore(): Plugin {
         /* Exit handling rejects pending requests. */
       });
       let closing: Promise<void> | undefined;
-      closeCore = () =>
+      const shutdown = () =>
         (closing ??= new Promise<void>((resolve) => {
           for (const res of subscribers) res.end();
           subscribers.clear();
@@ -43,6 +44,7 @@ export function devCore(): Plugin {
           });
           child.stdin.end();
         }));
+      closeCore = shutdown;
       createInterface({ input: child.stdout }).on("line", (line) => {
         try {
           const msg = JSON.parse(line);
@@ -75,7 +77,7 @@ export function devCore(): Plugin {
         for (const res of subscribers) res.end();
       });
       server.httpServer?.on("close", () => {
-        void closeCore?.();
+        void shutdown();
       });
       server.middlewares.use("/api", (req, res) => {
         if (closing || child.exitCode !== null || child.signalCode !== null) {

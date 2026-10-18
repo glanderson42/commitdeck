@@ -7,6 +7,7 @@ import (
 	"commitdeck/internal/issuetracker"
 	"commitdeck/internal/redact"
 	"commitdeck/internal/workspace"
+	"commitdeck/internal/workspacetools"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -194,6 +195,15 @@ func (c *WorkspaceContext) Render() {
 	if len([]rune(header)) > maxChars/3 {
 		header = clip(header, maxChars/3) + "\n[Ticket metadata truncated]\n"
 		c.Truncated = append(c.Truncated, "Ticket")
+	}
+	if c.Options.IncludeWorkspaceTools {
+		if maxChars < 4000 {
+			c.Options.IncludeWorkspaceTools = false
+			c.Warnings = append(c.Warnings, "Workspace tools require at least a 4,000 character budget; tools disabled in this snapshot.")
+		} else {
+			header += "\n" + workspacetools.Instructions + "\n"
+			c.IncludedSources = append(c.IncludedSources, "workspaceTools")
+		}
 	}
 	remaining := maxChars - len([]rune(header)) - footerReserve
 	for _, s := range sections {

@@ -1,3 +1,5 @@
+import { ImportSessions } from "../features/agents/ImportSessions";
+import { notes } from "../store/notes";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { PermissionQueue } from "../features/permissions/PermissionQueue";
 import {
@@ -35,6 +37,9 @@ import type { Tab } from "../types";
 export function App() {
   const deck = useDeck();
   const { boot, detail, layout, setLayout } = deck;
+  const [dailyAction, setDailyAction] = useState<string>();
+  const [knowledge, setKnowledge] = useState("");
+  const [knowledgeBusy, setKnowledgeBusy] = useState(false);
   const [palette, setPalette] = useState(false);
   const [create, setCreate] = useState(false);
   const [edit, setEdit] = useState(false);
@@ -60,7 +65,11 @@ export function App() {
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
+      if (
+        !(e.metaKey || e.ctrlKey) ||
+        (e.target instanceof Element && e.target.closest(".xterm"))
+      )
+        return;
       const key = e.key.toLowerCase();
       if (key === "k") {
         e.preventDefault();
@@ -73,6 +82,27 @@ export function App() {
       if (key === "1" && !e.shiftKey) {
         e.preventDefault();
         goDashboard();
+      }
+      if (!e.shiftKey && ["2", "3", "4", "5"].includes(key)) {
+        e.preventDefault();
+        setTab(
+          (
+            {
+              "2": "Agent",
+              "3": "Terminal",
+              "4": "Tasks",
+              "5": "Notes",
+            } as Record<string, Tab>
+          )[key],
+        );
+      }
+      if (e.shiftKey && key === "t") {
+        e.preventDefault();
+        void deck.newTerminal().catch(deck.report);
+      }
+      if (e.shiftKey && key === "i") {
+        e.preventDefault();
+        setDailyAction("import");
       }
       if (e.shiftKey && key === "p") {
         e.preventDefault();
@@ -92,11 +122,40 @@ export function App() {
   });
   useEffect(() => {
     setProviderRequest(undefined);
+    setDailyAction(undefined);
   }, [layout.selected]);
   const start = (provider: string, purpose?: Purpose) => {
     setRequestedPurpose(purpose);
     setTab("Agent");
     setProviderRequest(provider);
+  };
+  const daily = (action?: string) => {
+    if (action === "start-agent") {
+      start(boot?.providers.find((p) => p.available)?.id ?? "codex");
+      return;
+    }
+    if (action === "new-terminal") {
+      void deck.newTerminal().catch(deck.report);
+      return;
+    }
+    if (action === "create-pr") setTab("PR");
+    if (action?.startsWith("jira:")) setTab("Jira");
+    if (action === "workflow" || action === "start-work") setTab("Overview");
+    if (action === "archive" && w) {
+      if (
+        window.confirm(
+          "Archive this workspace? All notes, tasks, and history are preserved.",
+        )
+      )
+        void rpc("workspace.archive", { id: w.id, archived: true })
+          .then(deck.refresh)
+          .catch(deck.report);
+      return;
+    }
+    if (action === "cleanup") {
+      setTab("Git");
+    }
+    setDailyAction(action);
   };
   const refreshAll = () => {
     void deck.refresh();
@@ -106,6 +165,31 @@ export function App() {
     }
   };
   const commands: Command[] = [
+    {
+      id: "import",
+      label: "Import Agent Session",
+      group: "Agents",
+      run: () => daily("import"),
+    },
+    ...(w
+      ? [
+          ["new-terminal", "New Terminal"],
+          ["start-work", "Start Work"],
+          ["create-pr", "Create PR"],
+          ["jira:In Review", "Move Jira to In Review"],
+          ["jira:Done", "Move Jira to Done"],
+          ["workflow", "Start Agent Workflow"],
+          ["todo", "Create TODO"],
+          ["note", "Append Note"],
+          ["archive", "Archive Workspace"],
+          ["cleanup", "Clean Up Worktree"],
+        ].map(([id, label]) => ({
+          id,
+          label,
+          group: "Workspace actions",
+          run: () => daily(id),
+        }))
+      : []),
     {
       id: "dashboard",
       label: "Go to Dashboard",
@@ -350,9 +434,12 @@ export function App() {
           ) : (
             <>
               <WorkspaceView
+                key={w?.id}
                 deck={deck}
                 tab={tab}
                 setTab={setTab}
+                dailyAction={dailyAction}
+                onAction={daily}
                 providerRequest={providerRequest}
                 requestedPurpose={requestedPurpose}
                 setProviderRequest={setProviderRequest}
@@ -461,6 +548,68 @@ export function App() {
               </button>
             ))}
           </div>
+        </Modal>
+      )}
+      {dailyAction === "import" && boot && (
+        <ImportSessions
+          workspaces={boot.workspaces}
+          selected={w?.id}
+          onClose={() => setDailyAction(undefined)}
+          onImported={(session) => {
+            setDailyAction(undefined);
+            deck.select(session.workspaceId, "Agent", session.id);
+            void deck.refresh();
+          }}
+        />
+      )}
+      {(dailyAction === "todo" || dailyAction === "note") && w && (
+        <Modal
+          title={dailyAction === "todo" ? "Create TODO" : "Append note"}
+          onClose={() => setDailyAction(undefined)}
+        >
+          <form
+            className="form-body"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setKnowledgeBusy(true);
+              void (async () => {
+                if (dailyAction === "todo")
+                  await rpc("todo.save", {
+                    workspaceId: w.id,
+                    title: knowledge,
+                  });
+                else {
+                  await notes.flush(w.id);
+                  const current = notes.get(w.id);
+                  if (!current || current.state === "error")
+                    throw new Error("Save notes before appending");
+                  notes.change(w.id, current.content + "\n\n" + knowledge);
+                  await notes.flush(w.id);
+                  if (notes.get(w.id)?.state === "error")
+                    throw new Error("Note update could not be saved");
+                }
+                setKnowledge("");
+                setDailyAction(undefined);
+                await deck.refresh();
+              })()
+                .catch(deck.report)
+                .finally(() => setKnowledgeBusy(false));
+            }}
+          >
+            <textarea
+              autoFocus
+              required
+              rows={6}
+              value={knowledge}
+              onChange={(e) => setKnowledge(e.target.value)}
+            />
+            <button
+              className="primary"
+              disabled={knowledgeBusy || !knowledge.trim()}
+            >
+              Add to workspace
+            </button>
+          </form>
         </Modal>
       )}
       {palette && (

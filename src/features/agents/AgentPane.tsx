@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowUp,
   Bot,
+  Download,
   ChevronDown,
   CircleCheck,
   FileCode2,
@@ -87,6 +88,7 @@ export function AgentPane({
   requestedProvider,
   clearRequest,
   requestedPurpose,
+  onImport,
 }: {
   detail: Detail;
   providers: Provider[];
@@ -98,6 +100,7 @@ export function AgentPane({
   requestedProvider?: string;
   clearRequest: () => void;
   requestedPurpose?: Purpose;
+  onImport: () => void;
 }) {
   const w = detail.workspace;
   const sessions = detail.sessions;
@@ -212,6 +215,10 @@ export function AgentPane({
           <Plus size={14} />
           New session
         </button>
+        <button className="new-session" onClick={onImport}>
+          <Download size={14} />
+          Import session
+        </button>
         <div className="session-sidebar-bottom">
           <GitBranch size={13} />
           <span>{w.branch || "No worktree connected"}</span>
@@ -251,6 +258,13 @@ export function AgentPane({
                     {session.status}
                   </span>
                 </div>
+                {session.imported && (
+                  <p className="session-purpose">
+                    Imported ·{" "}
+                    {session.resumeSupported ? "Native resume" : "Read only"} ·
+                    Original directory: {session.sourceCwd || "unavailable"}
+                  </p>
+                )}
                 {session.purpose && (
                   <p className="session-purpose">{session.purpose}</p>
                 )}
@@ -338,7 +352,11 @@ export function AgentPane({
                       void send();
                     }
                   }}
-                  disabled={active || w.archived}
+                  disabled={
+                    active ||
+                    w.archived ||
+                    (!!session.imported && !session.resumeSupported)
+                  }
                 />
                 <div className="composer-bottom">
                   <span>
@@ -371,7 +389,12 @@ export function AgentPane({
                     <button
                       type="submit"
                       className="send-button"
-                      disabled={!prompt.trim() || busy || w.archived}
+                      disabled={
+                        !prompt.trim() ||
+                        busy ||
+                        w.archived ||
+                        (!!session.imported && !session.resumeSupported)
+                      }
                       aria-label="Send prompt"
                     >
                       <ArrowUp size={17} />

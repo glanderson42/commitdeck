@@ -19,9 +19,11 @@ export function TasksPane({
   const [dragged, setDragged] = useState("");
   useEffect(() => {
     setItems(todos);
+  }, [todos, id]);
+  useEffect(() => {
     setTitle("");
     setError("");
-  }, [todos, id]);
+  }, [id]);
   const mutate = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
@@ -31,6 +33,7 @@ export function TasksPane({
     } catch (e) {
       setError(message(e));
       setItems(todos);
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -165,8 +168,16 @@ export function TasksPane({
                   }
                 }}
               />
+              {todo.updatedBy && todo.updatedBy !== "user" && (
+                <span className="attribution">Updated by {todo.updatedBy}</span>
+              )}
               <button
                 className="icon-button delete-task"
+                title={
+                  todo.updatedBy && todo.updatedBy !== "user"
+                    ? `Updated by ${todo.updatedBy}`
+                    : "Delete task"
+                }
                 aria-label={`Delete ${todo.title}`}
                 disabled={busy}
                 onClick={() =>

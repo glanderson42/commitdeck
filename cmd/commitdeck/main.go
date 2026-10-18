@@ -5,6 +5,7 @@ import (
 	"commitdeck/internal/agents/opencode"
 	"commitdeck/internal/app"
 	"commitdeck/internal/config"
+	"commitdeck/internal/workspacetools"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,9 @@ func main() {
 	}
 }
 func run() error {
+	if len(os.Args) == 4 && os.Args[1] == "--workspace-tool" {
+		return workspacetools.RunHelper(context.Background(), os.Args[2], os.Args[3])
+	}
 	if len(os.Args) == 3 && os.Args[1] == "--agent-bridge" && os.Args[2] == "opencode" {
 		err := opencode.RunBridge()
 		if err != nil {
@@ -78,6 +82,12 @@ func run() error {
 		}()
 	}
 	stop()
+	// Cancelling owned processes also releases in-flight permission ACK waits before draining RPC handlers.
+	var processes sync.WaitGroup
+	processes.Add(2)
+	go func() { defer processes.Done(); a.Agents.Close() }()
+	go func() { defer processes.Done(); a.Terminals.Close() }()
 	wg.Wait()
+	processes.Wait()
 	return nil
 }

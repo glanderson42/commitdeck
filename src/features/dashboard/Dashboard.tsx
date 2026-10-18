@@ -267,9 +267,15 @@ function WorkspaceRow({
           ["running", "starting", "waiting_permission"].includes(s.status),
         ) && (
           <span className="muted">
-            {w.sessions.length
-              ? w.sessions.at(-1)?.provider + " · " + w.sessions.at(-1)?.status
-              : "No agent sessions"}
+            {w.workflowWaiting
+              ? "Workflow needs review"
+              : w.workflowFailed
+                ? "Workflow failed"
+                : w.sessions.length
+                  ? w.sessions.at(-1)?.provider +
+                    " · " +
+                    w.sessions.at(-1)?.status
+                  : "No agent sessions"}
           </span>
         )}
       </div>

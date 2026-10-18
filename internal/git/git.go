@@ -15,8 +15,10 @@ import (
 )
 
 type File struct {
-	Path   string `json:"path"`
-	Status string `json:"status"`
+	Staged   bool   `json:"staged"`
+	Unstaged bool   `json:"unstaged"`
+	Path     string `json:"path"`
+	Status   string `json:"status"`
 }
 type Repository struct {
 	Path   string `json:"path"`
@@ -120,7 +122,7 @@ func ParseStatus(out string) []File {
 			continue
 		}
 		status := p[:2]
-		files = append(files, File{Path: p[3:], Status: strings.TrimSpace(status)})
+		files = append(files, File{Path: p[3:], Status: strings.TrimSpace(status), Staged: status[0] != ' ' && status[0] != '?', Unstaged: status[1] != ' '})
 		if strings.ContainsAny(status, "RC") {
 			i++
 		}
@@ -398,4 +400,11 @@ func (g CLI) RemoveWorktree(repo, target string) error {
 	}
 	_, err = run(r, "worktree", "remove", "--", t)
 	return err
+}
+
+func (CLI) Fetch(path string) (string, error) {
+	if err := (CLI{}).ValidateRepo(path); err != nil {
+		return "", err
+	}
+	return run(path, "fetch", "origin")
 }

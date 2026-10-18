@@ -4,10 +4,10 @@
 
 An open-source desktop workspace that keeps a ticket, isolated Git worktree, notes, TODOs, coding-agent sessions, pull request, reviews, and checks together. Switch tickets without rebuilding your context.
 
-## Functionality — v0.1
+## Functionality
 
 - Manual workspace creation, editing, archive/restore, and confirmed deletion.
-- Read-only Jira Cloud import by issue key, structured issue details, comments, links, and a local cache.
+- Jira Cloud import by issue key, structured issue details, comments, links, and a local cache; confirmed status transitions, comments, and summary updates.
 - Persistent Markdown notes with editor/preview/split views, debounced autosave, serialized writes, and local draft recovery.
 - Editable TODOs with completion, progress, drag reorder, and keyboard reorder.
 - Local Git repository picker, branch/remote metadata, staged/unstaged/untracked files, and unified diffs.
@@ -22,15 +22,45 @@ An open-source desktop workspace that keeps a ticket, isolated Git worktree, not
 - Deduplicated in-app notifications for important agent, CI, review, and merge-readiness transitions.
 - Independent integration failures: cached Jira/GitHub data remains readable while local work continues. Selected workspaces refresh every 60 seconds, background workspaces every 3 minutes, with two integration jobs at most. Polling pauses while the window is hidden; manual refresh bypasses the interval.
 
+## Phase 3 daily workflow
+
+- Real xterm.js terminals in each ticket worktree, multiple named tabs, PTY resize/interactive input, bounded scrollback, and a resizable dock beside agents or other panes. Shells are explicitly stopped after restart.
+- Import native Codex, Claude Code, and OpenCode session metadata, review workspace suggestions, and resume supported native IDs without copying credentials or adopting external processes.
+- Agent workspace tools for TODOs, decisions, notes, and blockers with attribution. Add/complete/append can run through a selected session capability; deletion and every note replacement require individual approval. Optional provider skill files are previewed before creation.
+- Editable GitHub PR creation/update, draft/ready state, comments, reviewer requests, review replies/resolution, failed GitHub Actions rerun, and guarded squash merge.
+- Dynamic Jira transitions, comments, and summary edits. PR/merge follow-ups suggest Jira actions and require a separate confirmation.
+- Start Work previews branch/base/fetch/worktree operations. Local lifecycle follows coding, PR, review, merged, Done, and archive while keeping Jira separate.
+- Agent workflow presets with provider mapping, exact context preview, compact handoffs, manual approval between steps, and retry/skip/stop recovery.
+- Terminal selections, review feedback, and redacted file diffs can be previewed and sent to a chosen agent. Activity has its own tab; sidebar progress, focus states, pane sizes, fuzzy palette commands, and shortcuts are consistent.
+
+Use **Overview → Start Work** after attaching a repository, then **Agent** or **Terminal**. Push the branch in Terminal and open **PR → Create PR** when ready. Review feedback can become a TODO or a focused agent prompt. After merge, update Jira, mark Done, archive, and clean up the worktree when you choose.
+
+See [Terminal](docs/terminal.md), [Session import](docs/session-import.md), [Agent workspace skill](docs/agent-skill.md), and [Lifecycle/workflows/integration writes](docs/workflows.md) for behavior and limits.
+
+| Shortcut               | Action                           |
+| ---------------------- | -------------------------------- |
+| Cmd/Ctrl+1             | Dashboard                        |
+| Cmd/Ctrl+2 / 3 / 4 / 5 | Agent / Terminal / Tasks / Notes |
+| Cmd/Ctrl+Shift+A       | New agent session                |
+| Cmd/Ctrl+Shift+T       | New terminal                     |
+| Cmd/Ctrl+Shift+I       | Import session                   |
+| Cmd/Ctrl+Shift+P       | Pending permissions              |
+| Cmd/Ctrl+Shift+R       | Refresh workspace                |
+| Cmd/Ctrl+K             | Fuzzy command palette            |
+
+Terminal focus preserves shell key bindings. Use the titlebar command button to open application commands while typing in a terminal.
+
 ## Screenshots
 
 ![CommitDeck Dashboard](docs/screenshots/dashboard-qa.jpg)
 
-Dashboard verified using two disposable QA workspaces. Additional Agent, Notes, Git, and PR screenshots will follow. The app starts empty and does not seed demo tickets, agents, or integration results.
+![CommitDeck Phase 3 workspace with terminal dock](docs/screenshots/phase3-workspace.jpg)
+
+Screenshots use disposable QA workspaces. The app starts empty and does not seed demo tickets, agents, or integration results.
 
 ## Architecture
 
-React + TypeScript + Vite run inside Tauri 2. The small Rust shell launches a bundled Go sidecar and bridges JSON requests and streamed events over private stdin/stdout pipes. The desktop app opens no HTTP listener. Go owns SQLite, Git operations, credentials, external integrations, and agent processes.
+React + TypeScript + Vite run inside Tauri 2. The small Rust shell launches a bundled Go sidecar and bridges JSON requests and streamed events over private stdin/stdout pipes. Desktop RPC stays on private pipes. Tool-enabled agent turns can access a separate ephemeral, authenticated loopback service scoped to their workspace/session. Go owns SQLite, Git operations, credentials, external integrations, and agent processes.
 
 Browser development uses a same-origin Vite bridge to the same sidecar. It binds to `127.0.0.1:1420`, validates Host/Origin, and rejects non-JSON writes. Desktop development disables that bridge so only one backend opens the database.
 
@@ -49,7 +79,38 @@ The native application has been built and launched on macOS Apple Silicon. Windo
 
 ## Installation and local development
 
-No public binary release is published yet. Build from source:
+### Install a release
+
+Download the installer for your platform from the [CommitDeck v0.1.0 release](https://github.com/glanderson42/commitdeck/releases/tag/v0.1.0). These commands install the tagged release; use the source build below for Phase 3 development changes until they are published in a new release. With the GitHub CLI (`gh`) installed, these commands download and launch the installer:
+
+**macOS Apple Silicon** (use `*x64*.dmg` on Intel):
+
+```sh
+gh release download v0.1.0 --repo glanderson42/commitdeck --pattern '*aarch64*.dmg'
+open ./*.dmg
+```
+
+In the window that opens, drag CommitDeck to Applications.
+
+**Windows x64** (PowerShell):
+
+```powershell
+gh release download v0.1.0 --repo glanderson42/commitdeck --pattern '*.exe'
+Start-Process (Get-ChildItem *.exe | Select-Object -First 1).FullName
+```
+
+**Debian/Ubuntu x64**:
+
+```sh
+gh release download v0.1.0 --repo glanderson42/commitdeck --pattern '*.deb'
+sudo apt install ./*.deb
+```
+
+macOS and Windows builds are not signed/notarized yet, so the operating system may ask you to confirm launching the downloaded installer. See [GitHub releases](#github-releases) for the release build details.
+
+### Build from source
+
+Install the prerequisites above, then run:
 
 ```sh
 git clone https://github.com/glanderson42/commitdeck.git
@@ -216,6 +277,13 @@ Workspace deletion removes application records after confirmation. It retains Gi
 
 ## Tests and checks
 
+The [PR checks workflow](.github/workflows/ci.yml) runs when a pull request is opened, updated, reopened, or marked ready for review, and on pushes to `main`. It can also run manually from Actions. New pushes cancel older checks for the same PR.
+
+- **Unit tests and smoke checks (Linux/macOS):** Go tests with the race detector, `go vet`, React/Vitest tests, TypeScript checks, and the real sidecar/development-server smoke tests.
+- **Desktop builds:** macOS Apple Silicon and Intel `.dmg`, Windows x64 installer, and Linux x64 `.deb`, each with its matching Go sidecar. Installers are downloadable from the workflow's artifacts for seven days.
+
+Tests and builds report separately. PR checks use read-only repository permissions and do not require Jira, GitHub, or agent credentials. Release publication remains in the tag-triggered Release workflow. To require these checks before merging, select them in the repository's branch protection rules or ruleset after their first run.
+
 ```sh
 go test ./...
 go test -race ./...
@@ -224,13 +292,14 @@ npm run typecheck
 npm test
 npm run build:core
 npm run test:smoke
+npm run test:phase3
 npm run test:dev
 npm run build
 npm run check:desktop
 npm run desktop:build
 ```
 
-Migration `002_control_center.sql` adds permission requests/rules, context snapshots, activity, and deduplication signals without resetting existing data. A migration test opens a Phase 1 database and verifies preservation.
+Migration `002_control_center.sql` adds permission requests/rules, context snapshots, activity, and deduplication signals without resetting existing data. Migration 003 adds daily-workspace metadata and attribution. Migration tests verify old notes/tasks/session context remain intact.
 
 Go tests exercise persistence, TODO order, delete cascades, archive/restart, Git parsing, worktree safety, normalization, attention priorities, concurrent process lifecycle, cancellation, and crash handling. Frontend tests cover note debounce/write recovery, keyboard tasks, dashboard filtering/navigation/collapse, permission decisions/risk restrictions, and exact preview/hash submission. Backend tests also cover priority/grouping, permission lifecycle/rule matching, owned subprocess replies, OpenCode HTTP round trips, context inclusion/budget/hash/redaction, and activity deduplication. The smoke test drives the compiled Go process over real IPC in a disposable directory. The development-server regression test verifies that Vite restarts release the sidecar/database lock, including with a live event stream; port 1420 must be free. No live provider calls are billed by the test suite, and no real Jira/GitHub fixtures are presented as live results.
 
@@ -243,23 +312,29 @@ Go tests exercise persistence, TODO order, delete cascades, archive/restart, Git
 - **GitHub unavailable:** run `gh auth status`, verify repository access and the `origin` remote, then refresh. Cached PR/check data remains visible with its timestamp.
 - **Agent exits or waits:** check CLI login and permissions in a terminal. Review the in-app queue; if the channel expired or the interaction is unsupported, use the external session ID in the worktree terminal. Send another prompt to resume an existing session.
 - **Cannot create worktree:** the repository needs a commit, the base revision must exist, the branch must be valid, and it cannot already be checked out elsewhere. Existing directories are never overwritten.
-- **Cannot remove worktree:** commit or move your changes, including ignored/untracked files, and cancel its active agents. Cleanup never forces removal or deletes the branch.
+- **Cannot remove worktree:** commit or move your changes, including ignored/untracked files, cancel active agents, and close running terminals. Cleanup never forces removal or deletes the branch.
 - **Large tracked diffs are limited to 8 MB. Untracked file preview refused:** previews allow regular files up to 2 MB and reject symlinks leaving the repository. Binary content has no text diff.
 - **Unsigned app warning:** local builds are unsigned. Distribution signing/notarization is not configured yet.
 
 ## Current limits
 
-The MVP has a diff reader rather than a full code editor, and opens an external terminal. It does not stage/commit/push, create/merge PRs, or write to Jira. Provider adapters expose normalized tool/text/diff activity and supported approval channels; token-level output and non-permission interactive input still differ by provider. Unknown wire events are ignored rather than shown as raw JSON. Provider-owned history must remain on disk to resume a native session. Concurrent sessions may edit the same worktree; use separate ticket workspaces when isolation is required.
+CommitDeck has an integrated terminal and diff reader. A full code editor and local Git staging/commit/push controls remain future work. Provider adapters expose normalized tool/text/diff activity and supported approval channels; token-level output and non-permission interactive input still differ by provider. Unknown wire events are ignored rather than shown as raw JSON. Provider-owned history must remain on disk to resume a native session. Concurrent sessions may edit the same worktree; use separate ticket workspaces when isolation is required.
 
-Remote integration requests have timeouts, preserve the last successful cache, and do not block local editing. Large transcript histories are replayed in full from SQLite; the UI initially renders the latest 200 events and allows older activity. There is no transcript retention policy or automatic updater yet. Live authenticated provider/Jira/GitHub workflows require user setup and were not exercised against production accounts during development.
+Remote integration requests have timeouts, preserve the last successful cache, and do not block local editing. Large transcript histories are replayed in full from SQLite; the UI initially renders the latest 200 events and allows older activity. There is no transcript retention policy or automatic updater yet. Phase 3 schema migration 003 preserves existing records while adding terminals, import provenance, workflows, tool audit events, lifecycle, and note/task attribution. Live authenticated provider/Jira/GitHub workflows require user setup and were not exercised against production accounts during development.
 
 ## Next improvements
 
-1. Add embedded terminals and provider-supported interactive questions, with version/capability negotiation.
-2. Ship signed, tested macOS/Windows/Linux releases with installation and update automation.
+1. Add provider-supported interactive questions and version/capability negotiation.
+2. Ship signed/notarized releases and automatic updates.
 3. Add paginated/virtualized history, retention controls, and optional explicit session summaries.
-4. Add safe Git staging/commit/push and PR creation/merge with reviewable actions.
+4. Add safe local Git staging/commit/push with reviewable actions.
 5. Add webhook-driven CI/review updates, GitHub Enterprise, and additional issue trackers.
+
+## Phase 3 verification and limits
+
+The Phase 3 IPC smoke test uses a temporary fake provider CLI with the real Go sidecar, scoped helper, permission queue, PTY, workflow handoff, and restart. It makes no model requests. Automated Jira/GitHub writes use fixtures; no production tickets or PRs are changed. Backend race tests, frontend tests/typecheck, Go builds, Tauri check, and native macOS packaging are the development gates.
+
+Session discovery is bounded; Claude metadata parsing depends on its isolated JSONL format. Native resume still depends on installed versions/history. Agent workspace tools use provider-approved command execution and can require provider sandbox/network approval. Windows ConPTY and Linux runtime behavior need native platform verification despite successful Go cross-builds. CI rerun supports GitHub Actions; merges use squash and require approved review state. Local stage/commit/push, transcript pagination/retention, and automatic workflow progression are not implemented. See the focused docs for the full limits.
 
 ## License
 

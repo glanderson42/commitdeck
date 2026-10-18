@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { message, rpc, subscribe } from "../services/api";
+import { terminalEvent } from "../features/terminal/runtime";
 import { notes } from "../store/notes";
 import type {
   AgentEvent,
@@ -87,6 +88,7 @@ export function useDeck() {
     })();
     void subscribe(
       (e) => {
+        terminalEvent(e);
         if (e.event) {
           const ev = e.event;
           setEvents((all) => {
@@ -96,6 +98,7 @@ export function useDeck() {
           });
         }
         if (
+          e.type === "terminals_changed" ||
           e.type === "sessions_changed" ||
           e.type === "permissions_changed" ||
           e.type === "activity" ||
@@ -183,7 +186,21 @@ export function useDeck() {
     await refresh();
     select(w.id);
   };
+  const newTerminal = async (workspaceId = layout.selected) => {
+    if (!workspaceId) return;
+    const t = await rpc<{ id: string }>("terminal.create", { workspaceId });
+    await rpc("terminal.start", { id: t.id, cols: 100, rows: 28 });
+    setLayout((l) => ({
+      ...l,
+      view: "workspace",
+      selected: workspaceId,
+      tabs: { ...l.tabs, [workspaceId]: "Terminal" },
+      terminals: { ...l.terminals, [workspaceId]: t.id },
+    }));
+    await refresh();
+  };
   return {
+    newTerminal,
     ...integrations,
     permissionsOpen,
     setPermissionsOpen,

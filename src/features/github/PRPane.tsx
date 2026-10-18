@@ -1,3 +1,4 @@
+import { PRActions } from "./PRActions";
 import {
   Check,
   CircleCheck,
@@ -18,12 +19,22 @@ export function PRPane({
   refresh,
   syncError,
   onRefresh,
+  onSend,
+  onJira,
+  disabled,
+  createIntent,
+  onHandled,
 }: {
   id: string;
   cache: Cache<PullRequest | null> | null;
   refresh: () => Promise<void>;
   syncError?: string;
   onRefresh?: () => Promise<void>;
+  onSend: (s: string) => void;
+  onJira: () => void;
+  disabled: boolean;
+  createIntent?: boolean;
+  onHandled: () => void;
 }) {
   const [localError, setError] = useState("");
   const error = localError || syncError || "";
@@ -69,6 +80,16 @@ export function PRPane({
             updated {timeAgo(cache.updatedAt)}
           </div>
         )}
+        <PRActions
+          id={id}
+          pr={p}
+          disabled={disabled}
+          refresh={refresh}
+          onSend={onSend}
+          onJira={onJira}
+          intent={createIntent}
+          onHandled={onHandled}
+        />
         {!p ? (
           <Empty
             icon={<GitPullRequest size={26} />}

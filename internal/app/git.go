@@ -19,7 +19,7 @@ func (a *App) attach(id, path string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if w.WorktreePath != "" || a.Agents.ActiveWorkspace(id) {
+	if w.WorktreePath != "" || (a.Agents.ActiveWorkspace(id) || a.Terminals.Active(id)) {
 		return nil, errors.New("remove the existing worktree before changing repositories")
 	}
 	p, err := gitservice.Canonical(path)
@@ -44,8 +44,8 @@ func (a *App) createWorktree(id, branch, base string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if a.Agents.ActiveWorkspace(id) {
-		return nil, errors.New("cancel active agents before changing worktrees")
+	if a.Agents.ActiveWorkspace(id) || a.Terminals.Active(id) {
+		return nil, errors.New("cancel active agents and close running terminals before changing worktrees")
 	}
 	if w.RepoPath == "" {
 		return nil, errors.New("attach a repository first")
@@ -70,6 +70,7 @@ func (a *App) createWorktree(id, branch, base string) (any, error) {
 	if err = a.Git.CreateWorktree(w.RepoPath, target, branch, base); err != nil {
 		return nil, err
 	}
+	w.Lifecycle = "CODING"
 	w.WorktreePath = target
 	w.Branch = branch
 	return a.DB.UpdateWorkspace(w)
@@ -80,8 +81,8 @@ func (a *App) removeWorktree(id string, confirmed bool) (any, error) {
 	if !confirmed {
 		return nil, errors.New("worktree removal requires confirmation")
 	}
-	if a.Agents.ActiveWorkspace(id) {
-		return nil, errors.New("cancel active agents before removing worktree")
+	if a.Agents.ActiveWorkspace(id) || a.Terminals.Active(id) {
+		return nil, errors.New("cancel active agents and close running terminals before removing worktree")
 	}
 	w, err := a.DB.Workspace(id)
 	if err != nil {

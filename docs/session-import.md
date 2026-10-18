@@ -1,0 +1,19 @@
+# Import existing sessions
+
+Open **Import Agent Session** in the command palette, the workspace actions menu, or **Cmd/Ctrl+Shift+I**. Discovery runs independently for each provider with a 20-second timeout. Results show source, original directory, branch where available, update time, native-resume support, and a suggested workspace. Select a result and explicitly choose **Attach this session**.
+
+| Provider    | Discovery                                                                                                              | Resume                                                                                             |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Codex       | Supported `codex app-server` initialize + `thread/list`, up to five pages of 100 recent CLI/VS Code/app-server threads | Existing `thread/resume` adapter, with the selected workspace worktree as CWD                      |
+| Claude Code | Read-only bounded metadata parsing of `CLAUDE_CONFIG_DIR/projects/*/*.jsonl`, or `~/.claude/projects/*/*.jsonl`        | Existing CLI `--resume` adapter; recent Claude versions support searching other projects/worktrees |
+| OpenCode    | Supported `opencode session list --format json --max-count 200`                                                        | Existing v1 server adapter using the native session ID                                             |
+
+Codex listing uses the [supported app-server API](https://learn.chatgpt.com/docs/app-server). OpenCode listing uses its [CLI session command](https://opencode.ai/docs/cli/#session). Claude's [CLI resume support](https://code.claude.com/docs/en/cli-reference) is public; its project JSONL listing format is an isolated compatibility dependency. The Claude parser examines at most 2,000 regular transcript files and the first 256 KiB of each. It reads only session ID, CWD, branch, summary, and custom-title fields. It does not import conversations, tool output, or credential files. Missing titles fall back to the project directory. Later title records or changed formats may not be discovered.
+
+Matching is deterministic: exact canonical worktree path contributes 100 (a nested directory contributes 90), repository/CWD match 40, exact branch 40, and ticket-key text 20. High confidence starts at 80 and medium at 40. Suggestions never attach a session automatically. A provider/native-session pair cannot be imported twice, even into a different workspace, and a session already created inside CommitDeck is also treated as attached.
+
+Import saves normalized session metadata and source provenance in CommitDeck's database. Provider-owned files are neither edited nor copied. External processes are not adopted or stopped. Stop an externally running turn before continuing its native history here. New owned processes start in the selected workspace's isolated worktree. Existing conversation history can still mention its original directory; review that history and your prompt before asking for file changes.
+
+Imported sessions receive no hidden new context snapshot. Use **View / refresh session context** to preview and attach current sources or workspace tools. Resume requires the provider binary, its normal authenticated flow, and available native history. A session marked as not resumable is displayed read-only and cannot receive prompts. A provider may reject an expired or incompatible native ID; CommitDeck reports the failure and retains the import metadata.
+
+Provider parsers, duplicate prevention, match scoring, and unsupported-resume metadata have fixture tests. Discovery is bounded rather than a complete archival browser. Live authenticated resumes across every installed provider/version are not part of automated verification.

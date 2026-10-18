@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"commitdeck/internal/agents"
+	"commitdeck/internal/agents/discovery"
 	"commitdeck/internal/config"
 	"commitdeck/internal/dashboard"
 	"commitdeck/internal/database"
@@ -21,10 +22,17 @@ import (
 	"commitdeck/internal/jira"
 	"commitdeck/internal/pullrequest"
 	"commitdeck/internal/secrets"
+	"commitdeck/internal/terminal"
+	"commitdeck/internal/workflows"
 	"commitdeck/internal/workspace"
+	"commitdeck/internal/workspacetools"
 )
 
 type App struct {
+	Workflows *workflows.Service
+	Discovery *discovery.Service
+	Tools     *workspacetools.Service
+	Terminals *terminal.Manager
 	DB        *database.DB
 	Agents    *agents.Manager
 	Git       gitservice.GitService
@@ -60,9 +68,31 @@ func Open(data string, emit func(any)) (*App, error) {
 	}
 	a := &App{DB: db, Git: gitservice.CLI{}, PR: github.CLI{}, Secrets: secrets.Native{}, DataDir: data}
 	a.Agents = agents.New(db, emit)
+	a.Discovery = discovery.New(db)
+	a.Tools, err = workspacetools.New(db, a.Agents.Permissions, a.Agents.Activity)
+	if err != nil {
+		a.Agents.Close()
+		db.Close()
+		return nil, err
+	}
+	a.Agents.Tools = a.Tools
+	a.Workflows = &workflows.Service{DB: db, Agents: a.Agents, Context: a.Agents.Context, Activity: a.Agents.Activity}
+	if err = a.Workflows.Recover(); err != nil {
+		a.Tools.Close()
+		a.Agents.Close()
+		db.Close()
+		return nil, err
+	}
+	a.Agents.OnFinished = a.Workflows.Reconcile
+	a.Terminals, err = terminal.New(db, emit)
+	if err != nil {
+		a.Agents.Close()
+		db.Close()
+		return nil, err
+	}
 	return a, nil
 }
-func (a *App) Close() { a.Agents.Close(); a.DB.Close() }
+func (a *App) Close() { a.Terminals.Close(); a.Agents.Close(); a.Tools.Close(); a.DB.Close() }
 func decode(raw json.RawMessage, v any) error {
 	if len(raw) == 0 {
 		return nil
@@ -122,8 +152,12 @@ func (a *App) summary(w workspace.Workspace) (Summary, error) {
 			completed++
 		}
 	}
-	state := dashboard.State(w, sessions, p, len(pending))
-	return Summary{Workspace: w, Attention: state, Group: dashboard.Group(state), Sessions: sessions, PR: p, TasksTotal: len(todos), TasksCompleted: completed, PendingPermissions: len(pending), LastActivity: w.UpdatedAt}, nil
+	var waiting, failed int
+	if err = a.DB.QueryRow("SELECT COALESCE(SUM(CASE WHEN status='awaiting_approval' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0) FROM agent_workflows WHERE workspace_id=?", w.ID).Scan(&waiting, &failed); err != nil {
+		return Summary{}, err
+	}
+	state := dashboard.StateWithWorkflows(w, sessions, p, len(pending), waiting, failed)
+	return Summary{WorkflowWaiting: waiting, WorkflowFailed: failed, Workspace: w, Attention: state, Group: dashboard.Group(state), Sessions: sessions, PR: p, TasksTotal: len(todos), TasksCompleted: completed, PendingPermissions: len(pending), LastActivity: w.UpdatedAt}, nil
 }
 func (a *App) bootstrap() (any, error) {
 	out, err := dashboard.Load(a.DB)
@@ -193,28 +227,40 @@ func (a *App) detail(id string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"workspace": s, "note": note, "todos": todos, "sessions": sessions, "jira": jc, "pr": pc, "permissions": permissions, "activity": events, "permissionRules": rules}, nil
+	terminals, err := a.Terminals.List(id)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"terminals": terminals, "workspace": s, "note": note, "todos": todos, "sessions": sessions, "jira": jc, "pr": pc, "permissions": permissions, "activity": events, "permissionRules": rules}, nil
 }
 func (a *App) Call(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var p struct {
-		ID          string   `json:"id"`
-		WorkspaceID string   `json:"workspaceId"`
-		Content     string   `json:"content"`
-		IDs         []string `json:"ids"`
-		File        string   `json:"file"`
-		Path        string   `json:"path"`
-		Branch      string   `json:"branch"`
-		Base        string   `json:"base"`
-		Key         string   `json:"key"`
-		Token       string   `json:"token"`
-		Confirm     bool     `json:"confirm"`
-		Archived    bool     `json:"archived"`
-		Prompt      string   `json:"prompt"`
-		Action      string   `json:"action"`
-		Settings    Settings `json:"settings"`
+		ID              string   `json:"id"`
+		WorkspaceID     string   `json:"workspaceId"`
+		ExpectedContent *string  `json:"expectedContent"`
+		ExpectedHash    string   `json:"expectedHash"`
+		Content         string   `json:"content"`
+		IDs             []string `json:"ids"`
+		File            string   `json:"file"`
+		Path            string   `json:"path"`
+		Branch          string   `json:"branch"`
+		Base            string   `json:"base"`
+		Key             string   `json:"key"`
+		Token           string   `json:"token"`
+		Confirm         bool     `json:"confirm"`
+		Archived        bool     `json:"archived"`
+		Prompt          string   `json:"prompt"`
+		Action          string   `json:"action"`
+		Settings        Settings `json:"settings"`
 	}
 	if err := decode(raw, &p); err != nil {
 		return nil, errors.New("invalid request")
+	}
+	if strings.HasPrefix(method, "skill.") || strings.HasPrefix(method, "discovery.") || strings.HasPrefix(method, "lifecycle.") || strings.HasPrefix(method, "pr.write") || strings.HasPrefix(method, "pr.template") || strings.HasPrefix(method, "jira.write") || method == "jira.transitions" || strings.HasPrefix(method, "workflow.") || method == "git.openFile" || method == "git.agentDiff" || method == "pr.reviewContext" {
+		return a.daily(ctx, method, raw)
+	}
+	if strings.HasPrefix(method, "terminal.") {
+		return a.terminalCall(ctx, method, raw)
 	}
 	switch method {
 	case "bootstrap":
@@ -248,14 +294,22 @@ func (a *App) Call(ctx context.Context, method string, raw json.RawMessage) (any
 	case "workspace.archive":
 		a.lifecycle.Lock()
 		defer a.lifecycle.Unlock()
-		if a.Agents.ActiveWorkspace(p.ID) {
-			return nil, errors.New("cancel active agents before archiving")
+		if a.Agents.ActiveWorkspace(p.ID) || a.Terminals.Active(p.ID) {
+			return nil, errors.New("cancel active agents and close running terminals before archiving")
 		}
 		w, err := a.DB.Workspace(p.ID)
 		if err != nil {
 			return nil, err
 		}
 		w.Archived = p.Archived
+		if w.Archived {
+			w.Lifecycle = "ARCHIVED"
+		} else {
+			w.Lifecycle = "BACKLOG"
+			if w.WorktreePath != "" {
+				w.Lifecycle = "CODING"
+			}
+		}
 		return a.DB.UpdateWorkspace(w)
 	case "workspace.delete":
 		a.lifecycle.Lock()
@@ -263,17 +317,30 @@ func (a *App) Call(ctx context.Context, method string, raw json.RawMessage) (any
 		if !p.Confirm {
 			return nil, errors.New("deleting workspace data requires confirmation")
 		}
-		if a.Agents.ActiveWorkspace(p.ID) {
-			return nil, errors.New("cancel active agents before deleting")
+		if a.Agents.ActiveWorkspace(p.ID) || a.Terminals.Active(p.ID) {
+			return nil, errors.New("cancel active agents and close running terminals before deleting")
 		}
 		return nil, a.DB.DeleteWorkspace(p.ID)
+	case "note.hash":
+		if len(p.Content) > 4<<20 {
+			return nil, errors.New("note exceeds 4 MB")
+		}
+		return database.NoteHash(p.Content), nil
 	case "note.save":
+		if p.ExpectedHash != "" {
+			return nil, a.DB.SaveNoteWithHash(p.WorkspaceID, p.Content, p.ExpectedHash)
+		}
+		if p.ExpectedContent != nil {
+			return nil, a.DB.SaveNoteIfUnchanged(p.WorkspaceID, p.Content, *p.ExpectedContent)
+		}
 		return nil, a.DB.SaveNote(p.WorkspaceID, p.Content)
 	case "todo.save":
 		var t workspace.Todo
 		if err := decode(raw, &t); err != nil {
 			return nil, err
 		}
+		t.UpdatedBy = "user"
+		t.SessionID = ""
 		saved, err := a.DB.SaveTodo(t)
 		if err == nil {
 			kind := "todo_updated"

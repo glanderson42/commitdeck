@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 )
 
-const sessionColumns = "id,workspace_id,provider,external_session_id,title,purpose,status,pid,created_at,updated_at"
+const sessionColumns = "id,workspace_id,provider,external_session_id,title,purpose,status,pid,created_at,updated_at,imported,resume_supported,source_cwd"
 
 func scanSession(r scanner) (s protocol.Session, err error) {
-	err = r.Scan(&s.ID, &s.WorkspaceID, &s.Provider, &s.ExternalSessionID, &s.Title, &s.Purpose, &s.Status, &s.PID, &s.CreatedAt, &s.UpdatedAt)
+	err = r.Scan(&s.ID, &s.WorkspaceID, &s.Provider, &s.ExternalSessionID, &s.Title, &s.Purpose, &s.Status, &s.PID, &s.CreatedAt, &s.UpdatedAt, &s.Imported, &s.ResumeSupported, &s.SourceCWD)
 	return
 }
 func (d *DB) Sessions(id string) ([]protocol.Session, error) {
@@ -36,7 +36,10 @@ func (d *DB) CreateSession(s protocol.Session) (protocol.Session, error) {
 	s.CreatedAt = workspace.Now()
 	s.UpdatedAt = s.CreatedAt
 	s.Status = "idle"
-	_, err := d.Exec("INSERT INTO agent_sessions ("+sessionColumns+") VALUES (?,?,?,?,?,?,?,?,?,?)", s.ID, s.WorkspaceID, s.Provider, s.ExternalSessionID, s.Title, s.Purpose, s.Status, s.PID, s.CreatedAt, s.UpdatedAt)
+	if !s.Imported {
+		s.ResumeSupported = true
+	}
+	_, err := d.Exec("INSERT INTO agent_sessions ("+sessionColumns+") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", s.ID, s.WorkspaceID, s.Provider, s.ExternalSessionID, s.Title, s.Purpose, s.Status, s.PID, s.CreatedAt, s.UpdatedAt, s.Imported, s.ResumeSupported, s.SourceCWD)
 	return s, err
 }
 func (d *DB) SessionStatus(id, status string, pid int) error {

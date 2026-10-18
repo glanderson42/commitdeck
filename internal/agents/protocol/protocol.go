@@ -20,6 +20,9 @@ type Event struct {
 	CreatedAt string `json:"createdAt"`
 }
 type Session struct {
+	Imported          bool   `json:"imported"`
+	ResumeSupported   bool   `json:"resumeSupported"`
+	SourceCWD         string `json:"sourceCwd"`
 	ID                string `json:"id"`
 	WorkspaceID       string `json:"workspaceId"`
 	Provider          string `json:"provider"`

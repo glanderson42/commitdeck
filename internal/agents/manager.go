@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -48,7 +49,12 @@ type running struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 }
+type WorkspaceTools interface {
+	Bind(context.Context, protocol.Session) ([]string, func(), error)
+}
 type Manager struct {
+	Tools       WorkspaceTools
+	OnFinished  func(string, string)
 	db          *database.DB
 	Context     *contextengine.Engine
 	Permissions *permissions.Service
@@ -176,6 +182,9 @@ func (m *Manager) Send(_ context.Context, id, prompt string) error {
 	if err != nil {
 		return err
 	}
+	if s.Imported && !s.ResumeSupported {
+		return errors.New("this imported session is read-only")
+	}
 	w, err := m.db.Workspace(s.WorkspaceID)
 	if err != nil {
 		return err
@@ -199,6 +208,18 @@ func (m *Manager) Send(_ context.Context, id, prompt string) error {
 	if err != nil {
 		cancel()
 		return err
+	}
+	if m.Tools != nil {
+		snapshot, snapshotErr := m.Context.Snapshot(s.ID)
+		if snapshotErr == nil && snapshot.Options.IncludeWorkspaceTools {
+			env, release, toolErr := m.Tools.Bind(ctx, s)
+			if toolErr != nil {
+				cancel()
+				return toolErr
+			}
+			cmd.Env = append(os.Environ(), env...)
+			go func() { <-ctx.Done(); release() }()
+		}
 	}
 	var conversation protocol.Conversation
 	if interactive, ok := p.(protocol.InteractiveRuntime); ok {
@@ -455,6 +476,9 @@ func (m *Manager) Send(_ context.Context, id, prompt string) error {
 		_ = m.db.SessionStatus(id, status, 0)
 		delete(m.active, id)
 		m.mu.Unlock()
+		if m.OnFinished != nil {
+			m.OnFinished(id, status)
+		}
 		if cached, e := m.db.Cache("pr", w.ID); e == nil {
 			var pr *pullrequest.PullRequest
 			if json.Unmarshal(cached.Data, &pr) == nil {

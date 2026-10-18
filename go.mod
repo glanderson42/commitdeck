@@ -3,6 +3,8 @@ module commitdeck
 go 1.25.0
 
 require (
+	github.com/UserExistsError/conpty v0.1.4
+	github.com/creack/pty v1.1.24
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.58.0

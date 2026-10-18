@@ -47,7 +47,7 @@ func (c CLI) FindForBranch(ctx context.Context, repo git.Repository, branch stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", name, "--head", branch, "--state", "open", "--limit", "20", "--json", "number,title,body,url,author,state,isDraft,mergeable,reviewDecision,reviewRequests,reviews,statusCheckRollup,headRefName,baseRefName")
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", name, "--head", branch, "--state", "all", "--limit", "20", "--json", "number,title,body,url,author,state,isDraft,mergeable,reviewDecision,reviewRequests,reviews,statusCheckRollup,headRefName,baseRefName,headRefOid,isCrossRepository")
 	data, err := cmd.Output()
 	if err != nil {
 		return nil, errors.New("GitHub unavailable; run gh auth login and check repository access")
@@ -57,7 +57,8 @@ func (c CLI) FindForBranch(ctx context.Context, repo git.Repository, branch stri
 		return nil, err
 	}
 	for _, r := range rows {
-		if str(r, "headRefName") == branch {
+		crossRepository, _ := r["isCrossRepository"].(bool)
+		if !crossRepository && str(r, "headRefName") == branch {
 			p := Normalize(r)
 			count, err := reviewComments(ctx, name, p.Number)
 			if err != nil {
@@ -97,7 +98,7 @@ func str(m map[string]any, k string) string { s, _ := m[k].(string); return s }
 func obj(v any) map[string]any              { m, _ := v.(map[string]any); return m }
 func arr(v any) []any                       { a, _ := v.([]any); return a }
 func Normalize(m map[string]any) pullrequest.PullRequest {
-	p := pullrequest.PullRequest{Title: str(m, "title"), URL: str(m, "url"), Author: str(obj(m["author"]), "login"), State: str(m, "state"), Mergeable: str(m, "mergeable"), ReviewState: str(m, "reviewDecision"), HeadBranch: str(m, "headRefName"), BaseBranch: str(m, "baseRefName"), Reviewers: []string{}, Checks: []pullrequest.Check{}, Reviews: []pullrequest.Review{}}
+	p := pullrequest.PullRequest{HeadOID: str(m, "headRefOid"), Title: str(m, "title"), URL: str(m, "url"), Author: str(obj(m["author"]), "login"), State: str(m, "state"), Mergeable: str(m, "mergeable"), ReviewState: str(m, "reviewDecision"), HeadBranch: str(m, "headRefName"), BaseBranch: str(m, "baseRefName"), Reviewers: []string{}, Checks: []pullrequest.Check{}, Reviews: []pullrequest.Review{}}
 	if n, ok := m["number"].(float64); ok {
 		p.Number = int(n)
 	}

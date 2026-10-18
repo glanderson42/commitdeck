@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { AttentionBadge, timeAgo } from "../../components/ui";
 import type { Deck } from "../../hooks/useDeck";
-import { rpc } from "../../services/api";
 import type { Tab } from "../../types";
 export function ContextPanel({
   deck,
@@ -52,15 +51,7 @@ export function ContextPanel({
           <span>{w.worktreePath ? "Isolated worktree" : "No worktree"}</span>
         </div>
         {w.worktreePath && (
-          <button
-            className="context-open"
-            onClick={() =>
-              void rpc("workspace.open", {
-                id: w.id,
-                action: "terminal",
-              }).catch(deck.report)
-            }
-          >
+          <button className="context-open" onClick={() => setTab("Terminal")}>
             <Terminal size={13} />
             Open terminal
             <ArrowUpRight size={12} />
@@ -154,7 +145,7 @@ function attentionDescription(value: string) {
         AGENT_WAITING: "An agent needs your input before it can continue.",
         CHANGES_REQUESTED: "A reviewer requested changes on this pull request.",
         CI_FAILED: "One or more checks need attention.",
-        CODING: "An agent is making progress in this worktree.",
+        CODING: "Development is in progress in this worktree.",
         READY_TO_MERGE:
           "Reviews and checks are complete. Ready for your final look.",
         WAITING_FOR_REVIEW:
