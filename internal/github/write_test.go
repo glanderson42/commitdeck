@@ -39,6 +39,22 @@ func TestWritePayloadsAndMergeGuards(t *testing.T) {
 	if got["title"] != action.Title || got["head"] != "PROJ-1" || got["base"] != "main" || got["body"] != action.Body {
 		t.Fatal(got)
 	}
+	for _, branch := range []string{"main", "master", "develop/custom"} {
+		t.Setenv("CD_TEST_RESPONSE", `{"default_branch":"`+branch+`"}`)
+		gotBranch, e := c.DefaultBranch(ctx, repo)
+		if e != nil || gotBranch != branch {
+			t.Fatal(gotBranch, e)
+		}
+		action.Base = branch
+		t.Setenv("CD_TEST_RESPONSE", `{"html_url":"https://github.com/o/r/pull/1"}`)
+		if _, e = c.Write(ctx, repo, nil, action); e != nil {
+			t.Fatal(e)
+		}
+		b, _ = os.ReadFile(payload)
+		if json.Unmarshal(b, &got) != nil || got["base"] != branch {
+			t.Fatal(string(b))
+		}
+	}
 	pr := &pullrequest.PullRequest{Number: 1, State: "OPEN", Mergeable: "MERGEABLE", HeadBranch: "PROJ-1", HeadOID: strings.Repeat("a", 40), UnresolvedComments: []pullrequest.Feedback{{ThreadID: "thread-1", CommentID: 42}}}
 	if _, err = c.Write(ctx, repo, pr, pullrequest.Action{Action: "merge", Number: 1, HeadOID: pr.HeadOID}); err == nil {
 		t.Fatal("unconfirmed merge")

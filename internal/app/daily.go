@@ -183,7 +183,22 @@ func (a *App) daily(ctx context.Context, method string, raw json.RawMessage) (an
 			}
 		}
 		body += "\n## Testing\n\n<!-- Record commands and results actually run. -->\n\n## Ticket\n\n" + w.ExternalKey + "\n"
-		return map[string]string{"title": strings.TrimSpace(w.ExternalKey + " " + w.Title), "body": body, "base": "main"}, nil
+		base, source := "", "manual"
+		if w.RepoPath != "" {
+			if repo, e := a.Git.Status(workingPath(w)); e == nil {
+				if provider, ok := a.PR.(pullrequest.DefaultBranchService); ok {
+					if branch, e := provider.DefaultBranch(ctx, *repo); e == nil && branch != "" {
+						base, source = branch, "GitHub"
+					}
+				}
+				if base == "" {
+					if branch, e := gitservice.DefaultBranch(repo.Path); e == nil {
+						base, source = branch, "cached origin HEAD"
+					}
+				}
+			}
+		}
+		return map[string]string{"title": strings.TrimSpace(w.ExternalKey + " " + w.Title), "body": body, "base": base, "baseSource": source}, nil
 	case "pr.write":
 		a.lifecycle.Lock()
 		defer a.lifecycle.Unlock()
@@ -258,15 +273,15 @@ func (a *App) daily(ctx context.Context, method string, raw json.RawMessage) (an
 		_ = a.Agents.Activity.Record(w.ID, "jira_"+p.Action, "Jira "+p.Action+" updated", "", true)
 		issue, err := tracker.GetIssue(ctx, w.ExternalKey)
 		if err != nil {
-			return map[string]string{"warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
+			return map[string]string{"status": "applied", "refreshStatus": "failed", "warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
 		}
 		if err = a.DB.PutCache("jira", w.ID, issue); err != nil {
-			return map[string]string{"warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
+			return map[string]string{"status": "applied", "refreshStatus": "failed", "warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
 		}
 		if _, err = a.DB.Exec("UPDATE workspaces SET status=?,updated_at=? WHERE id=?", issue.Status, workspace.Now(), w.ID); err != nil {
-			return map[string]string{"warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
+			return map[string]string{"status": "applied", "refreshStatus": "failed", "warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
 		}
-		return nil, nil
+		return map[string]string{"status": "applied", "refreshStatus": "updated"}, nil
 	case "git.agentDiff":
 		w, err := a.DB.Workspace(p.ID)
 		if err != nil {

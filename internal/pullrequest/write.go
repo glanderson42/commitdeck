@@ -21,3 +21,7 @@ type Action struct {
 type WritableService interface {
 	Write(context.Context, git.Repository, *PullRequest, Action) (string, error)
 }
+
+type DefaultBranchService interface {
+	DefaultBranch(context.Context, git.Repository) (string, error)
+}

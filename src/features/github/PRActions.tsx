@@ -49,7 +49,8 @@ export function PRActions({
   const [action, setAction] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [base, setBase] = useState("main");
+  const [base, setBase] = useState("");
+  const [baseSource, setBaseSource] = useState("manual");
   const [draft, setDraft] = useState(true);
   const [reviewer, setReviewer] = useState("");
   const [feedback, setFeedback] =
@@ -64,15 +65,20 @@ export function PRActions({
     setBody(kind === "edit" ? (pr?.description ?? "") : "");
     setTitle(pr?.title ?? "");
     if (kind === "create") {
+      setBase("");
+      setBaseSource("manual");
       setBusy(true);
       try {
-        const t = await rpc<{ title: string; body: string; base: string }>(
-          "pr.template",
-          { id },
-        );
+        const t = await rpc<{
+          title: string;
+          body: string;
+          base: string;
+          baseSource?: string;
+        }>("pr.template", { id });
         setTitle(t.title);
         setBody(t.body);
         setBase(t.base);
+        setBaseSource(t.baseSource || "manual");
       } catch (e) {
         setError(message(e));
       } finally {
@@ -299,9 +305,15 @@ export function PRActions({
                       Base branch
                       <input
                         required
+                        placeholder="Enter the target branch"
                         value={base}
                         onChange={(e) => setBase(e.target.value)}
                       />
+                      <span className="hint">
+                        {baseSource === "manual"
+                          ? "Default branch unavailable. Choose the target branch manually."
+                          : `Default from ${baseSource}; edit if needed.`}
+                      </span>
                     </label>
                     <label className="check-label">
                       <input

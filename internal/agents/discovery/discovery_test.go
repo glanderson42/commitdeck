@@ -30,6 +30,30 @@ func TestProviderMetadataAndWorkspaceMatch(t *testing.T) {
 	}
 }
 
+func BenchmarkPreparedDiscoveryMatching(b *testing.B) {
+	root := b.TempDir()
+	paths := pathCache{}
+	candidates := make([]candidate, 50)
+	for i := range candidates {
+		candidates[i] = prepareCandidate(workspace.Workspace{RepoPath: root, WorktreePath: root, ExternalKey: "PROJ-42"}, paths)
+	}
+	sessions := make([]Session, 2000)
+	for i := range sessions {
+		sessions[i] = Session{CWD: paths.resolve(root), Title: "PROJ-42 investigate"}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		for _, s := range sessions {
+			for _, c := range candidates {
+				if c.score(s) != 160 {
+					b.Fatal("matching semantics changed")
+				}
+			}
+		}
+	}
+}
+
 func TestPreparedMatcherCachesPathsAndPreservesTicketBoundaries(t *testing.T) {
 	root := t.TempDir()
 	worktree := filepath.Join(root, "ticket")

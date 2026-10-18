@@ -145,6 +145,46 @@ it("matches abbreviated commands in order without requiring a substring", () => 
   expect(fuzzyMatch("xyz", "Open Terminal")).toBe(false);
 });
 
+it.each(["main", "master", "develop/custom", ""])(
+  "previews the actual PR base and permits manual selection: %s",
+  async (branch) => {
+    vi.mocked(rpc).mockImplementation(async (method) =>
+      method === "pr.template"
+        ? {
+            title: "Retry",
+            body: "Tests not run",
+            base: branch,
+            baseSource: branch ? "GitHub" : "manual",
+          }
+        : { url: "https://github.com/o/r/pull/1" },
+    );
+    render(
+      <PRActions
+        id="w"
+        disabled={false}
+        refresh={vi.fn().mockResolvedValue(undefined)}
+        onSend={vi.fn()}
+        onJira={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create PR" }));
+    const input = await screen.findByPlaceholderText("Enter the target branch");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Title")).toHaveProperty("value", "Retry"),
+    );
+    expect(input).toHaveProperty("value", branch);
+    const chosen = branch || "team/trunk";
+    fireEvent.change(input, { target: { value: chosen } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm create" }));
+    await waitFor(() =>
+      expect(rpc).toHaveBeenCalledWith(
+        "pr.write",
+        expect.objectContaining({ base: chosen, confirm: true }),
+      ),
+    );
+  },
+);
+
 it.each([false, true])(
   "closes a successful Jira write despite a cache warning (refresh failure: %s)",
   async (failRefresh) => {

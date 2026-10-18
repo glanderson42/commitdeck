@@ -1,6 +1,8 @@
 package app
 
 import (
+	"commitdeck/internal/git"
+	"commitdeck/internal/pullrequest"
 	"commitdeck/internal/workspace"
 	"context"
 	"encoding/json"
@@ -75,10 +77,114 @@ func TestJiraWriteSuccessSurvivesRefreshFailures(t *testing.T) {
 				t.Fatalf("successful remote action reported as failure: %v", err)
 			}
 			warning, ok := result.(map[string]string)
-			if !ok || !strings.Contains(warning["warning"], "Jira action succeeded") {
+			if !ok || warning["status"] != "applied" || warning["refreshStatus"] != "failed" || !strings.Contains(warning["warning"], "Jira action succeeded") {
 				t.Fatal(result)
 			}
 		})
+	}
+}
+
+type branchProvider struct {
+	pullrequest.PullRequestService
+	branch string
+}
+
+func (p branchProvider) DefaultBranch(context.Context, git.Repository) (string, error) {
+	return p.branch, nil
+}
+
+func TestPRTemplateUsesRepositoryDefaultOrManualInput(t *testing.T) {
+	a, err := Open(t.TempDir(), func(any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	repo := t.TempDir()
+	if b, e := exec.Command("git", "init", repo).CombinedOutput(); e != nil {
+		t.Fatal(string(b), e)
+	}
+	w, err := a.DB.CreateWorkspace(workspace.Workspace{Title: "Retry", RepoPath: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, _ := json.Marshal(map[string]string{"id": w.ID})
+	for _, branch := range []string{"main", "master", "release/trunk", ""} {
+		a.PR = branchProvider{branch: branch}
+		v, e := a.Call(context.Background(), "pr.template", params)
+		if e != nil {
+			t.Fatal(e)
+		}
+		result := v.(map[string]string)
+		if result["base"] != branch {
+			t.Fatal(result)
+		}
+		if branch == "" && result["baseSource"] != "manual" {
+			t.Fatal(result)
+		}
+	}
+	if b, e := exec.Command("git", "-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/legacy-default").CombinedOutput(); e != nil {
+		t.Fatal(string(b), e)
+	}
+	a.PR = branchProvider{}
+	v, err := a.Call(context.Background(), "pr.template", params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := v.(map[string]string)
+	if result["base"] != "legacy-default" || result["baseSource"] != "cached origin HEAD" {
+		t.Fatal(result)
+	}
+}
+
+func TestCleanedWorkspaceArchiveRestoreAndRestart(t *testing.T) {
+	data := t.TempDir()
+	a, err := Open(data, func(any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init"}, {"-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-m", "Initial"}} {
+		if b, e := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); e != nil {
+			a.Close()
+			t.Fatal(string(b), e)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "ticket")
+	if err = a.Git.CreateWorktree(repo, path, "QA-1", "HEAD"); err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	w, err := a.DB.CreateWorkspace(workspace.Workspace{Title: "Restore", RepoPath: repo, WorktreePath: path, Branch: "QA-1"})
+	if err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	if _, err = a.removeWorktree(w.ID, true); err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	archive, _ := json.Marshal(map[string]any{"id": w.ID, "archived": true})
+	if _, err = a.Call(context.Background(), "workspace.archive", archive); err != nil {
+		a.Close()
+		t.Fatal(err)
+	}
+	a.Close()
+	a, err = Open(data, func(any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	stored, err := a.DB.Workspace(w.ID)
+	if err != nil || stored.Lifecycle != "ARCHIVED" {
+		t.Fatal(stored, err)
+	}
+	restore, _ := json.Marshal(map[string]any{"id": w.ID, "archived": false})
+	if _, err = a.Call(context.Background(), "workspace.archive", restore); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = a.DB.Workspace(w.ID)
+	if err != nil || stored.Lifecycle != "BACKLOG" || stored.WorktreePath != "" || stored.Branch != "" {
+		t.Fatal(stored, err)
 	}
 }
 

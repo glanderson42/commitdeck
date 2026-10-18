@@ -408,3 +408,17 @@ func (CLI) Fetch(path string) (string, error) {
 	}
 	return run(path, "fetch", "origin")
 }
+
+// DefaultBranch uses the locally cached origin HEAD without making network requests.
+func DefaultBranch(path string) (string, error) {
+	ref, err := run(path, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return "", err
+	}
+	ref = strings.TrimSpace(ref)
+	branch := strings.TrimPrefix(ref, "origin/")
+	if branch == "" || branch == ref {
+		return "", errors.New("origin default branch unavailable")
+	}
+	return branch, nil
+}

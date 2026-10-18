@@ -1,5 +1,3 @@
-//go:build !windows
-
 package terminal
 
 import (
@@ -10,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -57,14 +56,19 @@ func TestPTYLifecycleCwdResizeAndRecovery(t *testing.T) {
 	if err = m.Resize(tab.ID, -1, 0); err == nil {
 		t.Fatal("invalid resize accepted")
 	}
-	if err = m.Write(tab.ID, "printf '__CWD__'; pwd; stty size\n"); err != nil {
+	command := "printf '__CWD__'; pwd; stty size\n"
+	if runtime.GOOS == "windows" {
+		command = "echo __CWD__ & cd\r\n"
+	}
+	if err = m.Write(tab.ID, command); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		snapshot := m.Snapshot(tab.ID)
 		b, _ := base64.StdEncoding.DecodeString(fmt.Sprint(snapshot["data"]))
-		if strings.Contains(string(b), tree) && strings.Contains(string(b), "42 110") {
+		output := strings.ToLower(strings.ReplaceAll(string(b), "\\", "/"))
+		if strings.Contains(output, strings.ToLower(filepath.ToSlash(tree))) && (runtime.GOOS == "windows" || strings.Contains(output, "42 110")) {
 			break
 		}
 		if time.Now().After(deadline) {

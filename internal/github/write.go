@@ -40,6 +40,26 @@ func api(ctx context.Context, method, path string, payload any) ([]byte, error) 
 
 var oidRE = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 
+func (CLI) DefaultBranch(ctx context.Context, repo git.Repository) (string, error) {
+	name, err := Repository(repo.Remote)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	b, err := api(ctx, "GET", "repos/"+name, nil)
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if json.Unmarshal(b, &response) != nil || response.DefaultBranch == "" || strings.HasPrefix(response.DefaultBranch, "-") {
+		return "", errors.New("GitHub default branch unavailable")
+	}
+	return response.DefaultBranch, nil
+}
+
 func (CLI) Write(ctx context.Context, repo git.Repository, p *pullrequest.PullRequest, a pullrequest.Action) (string, error) {
 	if !a.Confirm {
 		return "", errors.New("review and confirm this GitHub action first")
