@@ -3,6 +3,30 @@ import { rpc, message } from "../../services/api";
 import { ErrorBox, Modal } from "../../components/ui";
 import { Markdown } from "../../components/Markdown";
 import type { PullRequest } from "../../types";
+
+function utf8Prefix(value: string, budget: number): string {
+  // Go validates UTF-8 bytes; slicing JavaScript strings can split Unicode characters.
+  const encoder = new TextEncoder();
+  let bytes = 0,
+    result = "";
+  for (const char of value) {
+    bytes += encoder.encode(char).length;
+    if (bytes > budget) break;
+    result += char;
+  }
+  return result;
+}
+
+function reviewTodoTitle(body: string, path: string): string {
+  const maxBytes = 1000;
+  const prefix = "Review: ";
+  const suffix = path
+    ? ` (${utf8Prefix(path, maxBytes - prefix.length - 3)})`
+    : "";
+  const budget = maxBytes - new TextEncoder().encode(prefix + suffix).length;
+  return prefix + utf8Prefix(body, budget) + suffix;
+}
+
 export function PRActions({
   id,
   pr,
@@ -183,7 +207,7 @@ export function PRActions({
                     setBusy(true);
                     void rpc("todo.save", {
                       workspaceId: id,
-                      title: `Review: ${c.body.slice(0, 850)}${c.path ? " (" + c.path + ")" : ""}`,
+                      title: reviewTodoTitle(c.body, c.path),
                     })
                       .then(refresh)
                       .then(() => setSuccess("Review feedback added to TODOs"))

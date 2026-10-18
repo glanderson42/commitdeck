@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"commitdeck/internal/permissions"
+	"commitdeck/internal/redact"
 	"context"
 	"encoding/json"
 	"os/exec"
@@ -19,6 +20,18 @@ type Event struct {
 	Error     string `json:"error,omitempty"`
 	CreatedAt string `json:"createdAt"`
 }
+
+// Redacted removes credential-shaped values before display or persistence.
+func (e Event) Redacted() Event {
+	e.Text = redact.Text(e.Text)
+	e.ToolName = redact.Text(e.ToolName)
+	e.Command = redact.Text(e.Command)
+	e.FilePath = redact.Text(e.FilePath)
+	e.Diff = redact.Text(e.Diff)
+	e.Error = redact.Text(e.Error)
+	return e
+}
+
 type Session struct {
 	Imported          bool   `json:"imported"`
 	ResumeSupported   bool   `json:"resumeSupported"`

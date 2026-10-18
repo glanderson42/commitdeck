@@ -55,7 +55,7 @@ func (d *DB) RecoverSessions() error {
 	return err
 }
 func (d *DB) AddEvent(e protocol.Event) error {
-	b, err := json.Marshal(e)
+	b, err := json.Marshal(e.Redacted())
 	if err != nil {
 		return err
 	}

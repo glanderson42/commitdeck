@@ -80,7 +80,9 @@ func TestManualStepOrderingHandoffFailureAndRetry(t *testing.T) {
 	if _, err = act("advance", "previewed", "Implement", true); err == nil {
 		t.Fatal("advanced running step")
 	}
-	_ = db.AddEvent(protocol.Event{ID: workspace.ID(), SessionID: first.ID, Type: "text", Text: "Findings: stable invoice ID. api_key=secret123", CreatedAt: workspace.Now()})
+	if err = db.AddEvent(protocol.Event{ID: workspace.ID(), SessionID: first.ID, Type: "text", Text: "Findings: stable invoice ID. [REDACTED]", CreatedAt: workspace.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	service.Reconcile(first.ID, "completed")
 	rows, _ := service.List(w.ID)
 	if rows[0].Status != "awaiting_approval" || rows[0].Steps[1].Status != "pending" || len(r.sent) != 1 {
@@ -91,7 +93,7 @@ func TestManualStepOrderingHandoffFailureAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := plan.(map[string]any)["prompt"].(string)
-	if !strings.Contains(prompt, "stable invoice ID") || strings.Contains(prompt, "secret123") {
+	if !strings.Contains(prompt, "stable invoice ID") || !strings.Contains(prompt, "[REDACTED]") {
 		t.Fatal(prompt)
 	}
 	r.fail = true

@@ -75,6 +75,8 @@ Creating a session persists metadata and the exact previewed context snapshot wi
 
 Supported UI events remain `text`, `status`, `command`, `tool`, `file_changed`, `diff`, `permission_request`, `error`, and `complete`. Unknown events are ignored/refused rather than displayed as raw JSON. Completed text/tool output is rendered; token deltas are not yet rendered live. User prompts and normalized agent output remain in local session history.
 
+Normalized event text, commands, file paths, diffs, tool names, and errors pass through secret-pattern redaction before streaming and before insertion into SQLite. Database insertion enforces this even for callers outside the agent manager. Redaction is best effort for recognized patterns; this does not scrub historical rows or guarantee detection of arbitrary secrets. Provider permission replies keep their original runtime inputs.
+
 ## Permission workflow
 
 A normalized request records workspace/session/provider/category, title/description, command/path/cwd, risk, channel availability, and pending/resolved state. Live reply callbacks stay in memory; SQLite does not store a resumable channel. Requests are displayed in Agent, Overview, the global queue, and Dashboard/sidebar attention. Individual decisions reach the owned process, then update persistence and activity. Provider I/O occurs outside the queue mutex; independent requests and server acknowledgements keep flowing.

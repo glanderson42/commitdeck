@@ -261,10 +261,12 @@ func (a *App) daily(ctx context.Context, method string, raw json.RawMessage) (an
 			return map[string]string{"warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
 		}
 		if err = a.DB.PutCache("jira", w.ID, issue); err != nil {
-			return nil, err
+			return map[string]string{"warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
 		}
-		_, err = a.DB.Exec("UPDATE workspaces SET status=?,updated_at=? WHERE id=?", issue.Status, workspace.Now(), w.ID)
-		return nil, err
+		if _, err = a.DB.Exec("UPDATE workspaces SET status=?,updated_at=? WHERE id=?", issue.Status, workspace.Now(), w.ID); err != nil {
+			return map[string]string{"warning": "Jira action succeeded; refresh the cached ticket manually."}, nil
+		}
+		return nil, nil
 	case "git.agentDiff":
 		w, err := a.DB.Workspace(p.ID)
 		if err != nil {

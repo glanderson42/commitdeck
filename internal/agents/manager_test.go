@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +24,39 @@ func (fakeRuntime) Command(ctx context.Context, cwd, id, prompt string) *exec.Cm
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "COMMITDECK_TEST_AGENT="+prompt)
 	return cmd
+}
+
+func TestAgentEventsRedactedBeforeStreaming(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var emitted protocol.Event
+	m := New(db, func(v any) {
+		if event, ok := v.(map[string]any)["event"].(protocol.Event); ok {
+			emitted = event
+		}
+	})
+	defer m.Close()
+	w, err := db.CreateWorkspace(workspace.Workspace{Title: "Ticket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := db.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.event(s.ID, protocol.Event{Type: "text", Text: "api_key=synthetic-stream-value"}); err != nil {
+		t.Fatal(err)
+	}
+	if emitted.Text != "[REDACTED]" {
+		t.Fatal("credential-shaped output streamed")
+	}
+	events, err := db.Events(s.ID)
+	if err != nil || len(events) != 1 || strings.Contains(events[0].Text, "synthetic-stream-value") {
+		t.Fatal(events, err)
+	}
 }
 func (fakeRuntime) Normalize(b []byte) ([]protocol.Event, string) {
 	m := protocol.Object(b)

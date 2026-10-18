@@ -54,6 +54,13 @@ var validID = regexp.MustCompile(`^[A-Za-z0-9_-]{8,200}$`)
 func (s *Service) Discover(ctx context.Context) Result {
 	out := Result{Sessions: []Session{}, Warnings: []string{}}
 	ws, _ := s.DB.Workspaces()
+	paths := pathCache{}
+	candidates := make([]candidate, 0, len(ws))
+	for _, w := range ws {
+		if !w.Archived {
+			candidates = append(candidates, prepareCandidate(w, paths))
+		}
+	}
 	type result struct {
 		rows []Session
 		err  error
@@ -88,14 +95,13 @@ func (s *Service) Discover(ctx context.Context) Result {
 				v.Title = "Imported session"
 			}
 			best := 0
-			for _, w := range ws {
-				if w.Archived {
-					continue
-				}
-				score := Score(v, w)
+			match := v
+			match.CWD, match.RepoPath = paths.resolve(v.CWD), paths.resolve(v.RepoPath)
+			for _, c := range candidates {
+				score := c.score(match)
 				if score > best {
 					best = score
-					v.SuggestedWorkspaceID = w.ID
+					v.SuggestedWorkspaceID = c.workspace.ID
 					v.Confidence = "Low"
 					if score >= 80 {
 						v.Confidence = "High"
@@ -120,44 +126,69 @@ func (s *Service) Discover(ctx context.Context) Result {
 	s.mu.Unlock()
 	return out
 }
-func samePath(a, b string) bool {
-	if a == "" || b == "" {
-		return false
+
+// Paths and matchers are prepared once per discovery, never per session/workspace pair.
+type pathCache map[string]string
+
+func (c pathCache) resolve(path string) string {
+	if path == "" {
+		return ""
 	}
-	aa, e1 := filepath.EvalSymlinks(a)
-	bb, e2 := filepath.EvalSymlinks(b)
-	return e1 == nil && e2 == nil && aa == bb
+	if resolved, ok := c[path]; ok {
+		return resolved
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolved = ""
+	}
+	c[path] = resolved
+	return resolved
 }
+
+type candidate struct {
+	workspace workspace.Workspace
+	ticketKey *regexp.Regexp
+}
+
+func prepareCandidate(w workspace.Workspace, paths pathCache) candidate {
+	w.WorktreePath, w.RepoPath = paths.resolve(w.WorktreePath), paths.resolve(w.RepoPath)
+	c := candidate{workspace: w}
+	if w.ExternalKey != "" {
+		c.ticketKey = regexp.MustCompile(`(^|[^a-z0-9])` + regexp.QuoteMeta(strings.ToLower(w.ExternalKey)) + `([^a-z0-9]|$)`)
+	}
+	return c
+}
+
 func withinPath(child, parent string) bool {
 	if child == "" || parent == "" {
 		return false
 	}
-	a, e1 := filepath.EvalSymlinks(child)
-	b, e2 := filepath.EvalSymlinks(parent)
-	if e1 != nil || e2 != nil {
-		return false
-	}
-	rel, err := filepath.Rel(b, a)
+	rel, err := filepath.Rel(parent, child)
 	return err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 func Score(s Session, w workspace.Workspace) int {
+	paths := pathCache{}
+	c := prepareCandidate(w, paths)
+	s.CWD, s.RepoPath = paths.resolve(s.CWD), paths.resolve(s.RepoPath)
+	return c.score(s)
+}
+
+func (c candidate) score(s Session) int {
+	w := c.workspace
 	score := 0
-	if samePath(s.CWD, w.WorktreePath) {
+	if s.CWD != "" && s.CWD == w.WorktreePath {
 		score += 100
 	} else if withinPath(s.CWD, w.WorktreePath) {
 		score += 90
 	}
-	if withinPath(s.CWD, w.RepoPath) || samePath(s.RepoPath, w.RepoPath) {
+	if withinPath(s.CWD, w.RepoPath) || (s.RepoPath != "" && s.RepoPath == w.RepoPath) {
 		score += 40
 	}
 	if s.Branch != "" && s.Branch == w.Branch {
 		score += 40
 	}
-	if w.ExternalKey != "" {
-		key := regexp.QuoteMeta(strings.ToLower(w.ExternalKey))
-		if regexp.MustCompile(`(^|[^a-z0-9])` + key + `([^a-z0-9]|$)`).MatchString(strings.ToLower(s.Title + " " + s.Branch)) {
-			score += 20
-		}
+	if c.ticketKey != nil && c.ticketKey.MatchString(strings.ToLower(s.Title+" "+s.Branch)) {
+		score += 20
 	}
 	return score
 }

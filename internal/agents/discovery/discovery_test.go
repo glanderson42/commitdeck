@@ -3,6 +3,7 @@ package discovery
 import (
 	"commitdeck/internal/database"
 	"commitdeck/internal/workspace"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +27,44 @@ func TestProviderMetadataAndWorkspaceMatch(t *testing.T) {
 	}
 	if _, err = ParseOpenCode([]byte(`{"version":"changed"}`)); err == nil {
 		t.Fatal("unknown format accepted")
+	}
+}
+
+func TestPreparedMatcherCachesPathsAndPreservesTicketBoundaries(t *testing.T) {
+	root := t.TempDir()
+	worktree := filepath.Join(root, "ticket")
+	if err := os.MkdirAll(filepath.Join(worktree, "src"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	paths := pathCache{}
+	c := prepareCandidate(workspace.Workspace{RepoPath: root, WorktreePath: worktree, ExternalKey: "PROJ-42", Branch: "PROJ-42-retry"}, paths)
+	s := Session{CWD: paths.resolve(filepath.Join(worktree, "src")), RepoPath: paths.resolve(root), Title: "Investigate PROJ-42", Branch: "PROJ-42-retry"}
+	if got := c.score(s); got != 190 {
+		t.Fatalf("nested match = %d, want 190", got)
+	}
+	if len(paths) != 3 {
+		t.Fatalf("resolved %d paths, want 3 unique paths", len(paths))
+	}
+	// Matching prepared values does not touch the filesystem again.
+	if err := os.Rename(worktree, worktree+"-moved"); err != nil {
+		t.Fatal(err)
+	}
+	if paths.resolve(worktree) != c.workspace.WorktreePath || c.score(s) != 190 {
+		t.Fatal("prepared paths were resolved again")
+	}
+	for _, title := range []string{"PROJ-420", "XPROJ-42", "PROJ-42suffix"} {
+		if got := c.score(Session{Title: title}); got != 0 {
+			t.Fatalf("false ticket match %q: %d", title, got)
+		}
+	}
+	if got := c.score(Session{Title: "(proj-42): retry"}); got != 20 {
+		t.Fatal(got)
+	}
+	if got := c.score(Session{CWD: filepath.Join(c.workspace.RepoPath, "ticket-sibling")}); got != 40 {
+		t.Fatalf("sibling matched as worktree: %d", got)
+	}
+	if paths.resolve(filepath.Join(root, "missing")) != "" {
+		t.Fatal("missing path matched")
 	}
 }
 func TestImportIsExplicitScopedAndDuplicateSafe(t *testing.T) {

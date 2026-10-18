@@ -24,6 +24,7 @@ export function JiraActions({
   const [body, setBody] = useState("");
   const [title, setTitle] = useState(issue.title);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const open = async (kind: string, wanted?: string) => {
     setAction(kind);
@@ -74,6 +75,11 @@ export function JiraActions({
           Edit summary
         </button>
       </div>
+      {notice && (
+        <p className="context-warning" role="status">
+          {notice}
+        </p>
+      )}
       {action && (
         <Modal
           title={`Jira · ${action === "transition" ? "Change status" : action === "comment" ? "Add comment" : "Edit summary"}`}
@@ -94,9 +100,16 @@ export function JiraActions({
                 title,
               })
                 .then(async (result) => {
-                  await refresh();
-                  if (result?.warning) setError(result.warning);
-                  else setAction("");
+                  setAction("");
+                  setNotice(result?.warning || "Jira action succeeded.");
+                  try {
+                    await refresh();
+                  } catch {
+                    setNotice(
+                      result?.warning ||
+                        "Jira action succeeded; local refresh failed. Refresh manually.",
+                    );
+                  }
                 })
                 .catch((e) => setError(message(e)))
                 .finally(() => setBusy(false));

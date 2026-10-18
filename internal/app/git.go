@@ -96,5 +96,6 @@ func (a *App) removeWorktree(id string, confirmed bool) (any, error) {
 	}
 	w.WorktreePath = ""
 	w.Branch = ""
+	w.Lifecycle = workspace.DevelopmentState(w, nil)
 	return a.DB.UpdateWorkspace(w)
 }

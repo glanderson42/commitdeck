@@ -151,6 +151,7 @@ func (m *Manager) ResumeSession(ctx context.Context, id string) (protocol.Sessio
 	return s, nil
 }
 func (m *Manager) event(id string, e protocol.Event) error {
+	e = e.Redacted()
 	e.ID = workspace.ID()
 	e.SessionID = id
 	e.CreatedAt = workspace.Now()
