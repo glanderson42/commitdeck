@@ -8,7 +8,7 @@ Candidate: `v0.1.0-beta.1`. This checklist records required verification, not co
 - With Go 1.27.2, run `go test ./...`, `go test -race ./...`, `go vet ./...`.
 - Build the sidecar, then run `npm run test:smoke`, `npm run test:phase3`, `npm run test:dev` (port 1420 free).
 - Run `npm run check:desktop` and a native desktop build with locked Cargo dependencies.
-- Run `npm audit --audit-level=high` and `go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...`.
+- Run `npm audit --audit-level=high` and `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`.
 - CI runs Go/race/frontend/IPC tests on Windows, Linux and macOS. Terminal tests use ConPTY on Windows and a PTY on Unix; fixtures do not use real provider accounts.
 - Installer builds cover macOS ARM64 and Intel, Windows x64 NSIS, and Linux x64 Debian. Compilation and a passing terminal unit test do not prove a native installer launches correctly.
 
