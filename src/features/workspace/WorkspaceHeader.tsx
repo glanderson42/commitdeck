@@ -24,6 +24,7 @@ export function WorkspaceHeader({
   onEdit,
   onDelete,
   onRefresh,
+  onAction,
 }: {
   deck: Deck;
   tab: Tab;
@@ -31,6 +32,7 @@ export function WorkspaceHeader({
   onEdit: () => void;
   onDelete: () => void;
   onRefresh: () => void;
+  onAction: (s: string) => void;
 }) {
   const { detail, layout, setLayout } = deck;
   const [menu, setMenu] = useState(false);
@@ -52,6 +54,21 @@ export function WorkspaceHeader({
           <ChevronRight size={12} />
           <span>{w.externalKey || "Local workspace"}</span>
           <div className="heading-actions">
+            <button
+              disabled={w.archived || !w.repoPath || !!w.worktreePath}
+              onClick={() => onAction("start-work")}
+            >
+              Start Work
+            </button>
+            <button
+              title="Show terminal alongside this pane"
+              aria-pressed={!!layout.terminalSplit}
+              onClick={() =>
+                setLayout((l) => ({ ...l, terminalSplit: !l.terminalSplit }))
+              }
+            >
+              Split terminal
+            </button>
             <button
               className="icon-button"
               title="Refresh workspace"
@@ -87,6 +104,47 @@ export function WorkspaceHeader({
                     onClick={() => setMenu(false)}
                   />
                   <div className="dropdown-menu">
+                    <button
+                      disabled={w.archived}
+                      onClick={() => {
+                        onAction("start-agent");
+                        setMenu(false);
+                      }}
+                    >
+                      Start Agent
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTab("Terminal");
+                        setMenu(false);
+                      }}
+                    >
+                      Open Terminal
+                    </button>
+                    <button
+                      onClick={() => {
+                        onAction("import");
+                        setMenu(false);
+                      }}
+                    >
+                      Import Session
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTab("PR");
+                        setMenu(false);
+                      }}
+                    >
+                      Open PR
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTab("Jira");
+                        setMenu(false);
+                      }}
+                    >
+                      Open Jira
+                    </button>
                     <button
                       onClick={() => {
                         onEdit();
@@ -134,6 +192,9 @@ export function WorkspaceHeader({
           <span className="status-pill blue">
             <i className="dot" />
             {w.status}
+          </span>
+          <span className="muted tiny" title="Local development lifecycle">
+            {w.lifecycle || "BACKLOG"}
           </span>
           {w.archived && <span className="status-pill muted">Archived</span>}
           <span className="metadata-branch" title={w.branch}>

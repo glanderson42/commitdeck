@@ -20,6 +20,7 @@ execFileSync(
   "go",
   [
     "build",
+    "-mod=readonly",
     "-trimpath",
     "-o",
     `src-tauri/binaries/commitdeck-core-${triple}${platform === "windows" ? ".exe" : ""}`,
@@ -34,6 +35,7 @@ execFileSync(
   "go",
   [
     "build",
+    "-mod=readonly",
     "-o",
     `bin/commitdeck-core${process.platform === "win32" ? ".exe" : ""}`,
     "./cmd/commitdeck",

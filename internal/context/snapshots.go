@@ -2,6 +2,7 @@ package context
 
 import (
 	"commitdeck/internal/agents/protocol"
+	"commitdeck/internal/redact"
 	"commitdeck/internal/workspace"
 	"context"
 	"database/sql"
@@ -23,6 +24,9 @@ type Snapshot struct {
 }
 
 func (e *Engine) Save(session protocol.Session, c *WorkspaceContext) error {
+	if redact.Text(c.Markdown) != c.Markdown {
+		return errors.New("context contains recognizable credentials; rebuild and preview it before saving")
+	}
 	sources, _ := json.Marshal(c.IncludedSources)
 	opts, _ := json.Marshal(c.Options)
 	_, err := e.DB.Exec("INSERT INTO agent_session_context(id,session_id,workspace_id,generated_at,context_hash,included_sources,character_count,options,markdown) VALUES(?,?,?,?,?,?,?,?,?)", workspace.ID(), session.ID, session.WorkspaceID, workspace.Now(), c.Hash, string(sources), c.CharacterCount, string(opts), c.Markdown)

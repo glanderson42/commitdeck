@@ -1,3 +1,4 @@
+import { JiraActions } from "./JiraActions";
 import { MessageSquare, RefreshCw, Ticket } from "lucide-react";
 import { useState } from "react";
 import { Markdown } from "../../components/Markdown";
@@ -11,6 +12,8 @@ export function JiraPane({
   syncError,
   onRefresh,
   settings,
+  intent,
+  onHandled,
 }: {
   workspace: Workspace;
   cache: Cache<Issue> | null;
@@ -18,6 +21,8 @@ export function JiraPane({
   syncError?: string;
   onRefresh?: () => Promise<void>;
   settings: () => void;
+  intent?: string;
+  onHandled: () => void;
 }) {
   const [localError, setError] = useState("");
   const error = localError || syncError || "";
@@ -43,7 +48,7 @@ export function JiraPane({
       <div className="panel-toolbar">
         <div className="toolbar-title">
           <Ticket size={16} />
-          Issue details<span className="read-only">READ ONLY</span>
+          Issue details
         </div>
         <button disabled={busy} onClick={() => void fetch()}>
           <RefreshCw size={14} className={busy ? "spin" : ""} />
@@ -76,6 +81,14 @@ export function JiraPane({
           </Empty>
         ) : (
           <>
+            <JiraActions
+              id={w.id}
+              issue={issue}
+              refresh={refresh}
+              disabled={w.archived}
+              intent={intent}
+              onHandled={onHandled}
+            />
             <div className="issue-heading">
               <span className="eyebrow">{issue.key}</span>
               <h2>{issue.title}</h2>

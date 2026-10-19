@@ -74,3 +74,17 @@ func TestBulkRowsIncludeTasksNotesAndSessions(t *testing.T) {
 		t.Fatal("notes not searchable")
 	}
 }
+
+func TestWorkflowAttentionDoesNotHideHigherPriorityFailures(t *testing.T) {
+	w := workspace.Workspace{}
+	if StateWithWorkflows(w, nil, nil, 0, 1, 0) != "AGENT_WAITING" {
+		t.Fatal("workflow approval missing")
+	}
+	if StateWithWorkflows(w, nil, nil, 0, 0, 1) != "BLOCKED" {
+		t.Fatal("failed workflow missing")
+	}
+	pr := &pullrequest.PullRequest{State: "OPEN", ChangesRequested: 1}
+	if StateWithWorkflows(w, nil, pr, 0, 0, 1) != "CHANGES_REQUESTED" {
+		t.Fatal("review priority lost")
+	}
+}

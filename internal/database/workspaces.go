@@ -1,19 +1,37 @@
 package database
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"strings"
 
+	"commitdeck/internal/identity"
 	"commitdeck/internal/workspace"
 )
 
-const workspaceColumns = "id,external_key,title,status,repo_path,worktree_path,branch,jira_ticket_id,archived,created_at,updated_at"
+func NoteHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+func (d *DB) SaveNoteWithHash(id, content, expectedHash string) error {
+	current, err := d.Note(id)
+	if err != nil {
+		return err
+	}
+	if NoteHash(current.Content) != expectedHash {
+		return errors.New("notes changed outside this editor; your draft is preserved. Use Compare with saved note to review and merge the latest changes.")
+	}
+	return d.SaveNoteIfUnchanged(id, content, current.Content)
+}
+
+const workspaceColumns = "id,external_key,title,status,repo_path,worktree_path,branch,jira_ticket_id,archived,created_at,updated_at,lifecycle"
 
 type scanner interface{ Scan(...any) error }
 
 func scanWorkspace(r scanner) (w workspace.Workspace, err error) {
-	err = r.Scan(&w.ID, &w.ExternalKey, &w.Title, &w.Status, &w.RepoPath, &w.WorktreePath, &w.Branch, &w.JiraTicketID, &w.Archived, &w.CreatedAt, &w.UpdatedAt)
+	err = r.Scan(&w.ID, &w.ExternalKey, &w.Title, &w.Status, &w.RepoPath, &w.WorktreePath, &w.Branch, &w.JiraTicketID, &w.Archived, &w.CreatedAt, &w.UpdatedAt, &w.Lifecycle)
 	return
 }
 func (d *DB) Workspaces() ([]workspace.Workspace, error) {
@@ -53,6 +71,7 @@ func (d *DB) CreateWorkspace(w workspace.Workspace) (workspace.Workspace, error)
 	if err := validateWorkspace(&w); err != nil {
 		return w, err
 	}
+	w.Lifecycle = "BACKLOG"
 	w.ID = workspace.ID()
 	w.CreatedAt = workspace.Now()
 	w.UpdatedAt = w.CreatedAt
@@ -61,11 +80,11 @@ func (d *DB) CreateWorkspace(w workspace.Workspace) (workspace.Workspace, error)
 		return w, err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec("INSERT INTO workspaces ("+workspaceColumns+") VALUES (?,?,?,?,?,?,?,?,?,?,?)", w.ID, w.ExternalKey, w.Title, w.Status, w.RepoPath, w.WorktreePath, w.Branch, w.JiraTicketID, w.Archived, w.CreatedAt, w.UpdatedAt)
+	_, err = tx.Exec("INSERT INTO workspaces ("+workspaceColumns+") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", w.ID, w.ExternalKey, w.Title, w.Status, w.RepoPath, w.WorktreePath, w.Branch, w.JiraTicketID, w.Archived, w.CreatedAt, w.UpdatedAt, w.Lifecycle)
 	if err != nil {
 		return w, err
 	}
-	_, err = tx.Exec("INSERT INTO notes VALUES (?,?,?,?,?)", workspace.ID(), w.ID, "", w.CreatedAt, w.CreatedAt)
+	_, err = tx.Exec("INSERT INTO notes (id,workspace_id,content,created_at,updated_at) VALUES (?,?,?,?,?)", workspace.ID(), w.ID, "", w.CreatedAt, w.CreatedAt)
 	if err != nil {
 		return w, err
 	}
@@ -76,7 +95,7 @@ func (d *DB) UpdateWorkspace(w workspace.Workspace) (workspace.Workspace, error)
 		return w, err
 	}
 	w.UpdatedAt = workspace.Now()
-	r, err := d.Exec("UPDATE workspaces SET external_key=?,title=?,status=?,repo_path=?,worktree_path=?,branch=?,jira_ticket_id=?,archived=?,updated_at=? WHERE id=?", w.ExternalKey, w.Title, w.Status, w.RepoPath, w.WorktreePath, w.Branch, w.JiraTicketID, w.Archived, w.UpdatedAt, w.ID)
+	r, err := d.Exec("UPDATE workspaces SET external_key=?,title=?,status=?,repo_path=?,worktree_path=?,branch=?,jira_ticket_id=?,archived=?,updated_at=?,lifecycle=? WHERE id=?", w.ExternalKey, w.Title, w.Status, w.RepoPath, w.WorktreePath, w.Branch, w.JiraTicketID, w.Archived, w.UpdatedAt, w.Lifecycle, w.ID)
 	if err = changed(r, err); err != nil {
 		return w, err
 	}
@@ -100,14 +119,18 @@ func (d *DB) DeleteWorkspace(id string) error {
 	return changed(r, err)
 }
 func (d *DB) Note(id string) (n workspace.Note, err error) {
-	err = d.QueryRow("SELECT id,workspace_id,content,created_at,updated_at FROM notes WHERE workspace_id=?", id).Scan(&n.ID, &n.WorkspaceID, &n.Content, &n.CreatedAt, &n.UpdatedAt)
+	err = d.QueryRow("SELECT id,workspace_id,content,created_at,updated_at,updated_by,session_id FROM notes WHERE workspace_id=?", id).Scan(&n.ID, &n.WorkspaceID, &n.Content, &n.CreatedAt, &n.UpdatedAt, &n.UpdatedBy, &n.SessionID)
 	return
 }
 func (d *DB) SaveNote(id, content string) error {
 	if len(content) > 4<<20 {
 		return errors.New("note exceeds 4 MB")
 	}
-	r, err := d.Exec("UPDATE notes SET content=?,updated_at=? WHERE workspace_id=?", content, workspace.Now(), id)
+	n, err := d.Note(id)
+	if err != nil {
+		return err
+	}
+	r, err := d.Exec("UPDATE notes SET content=?,updated_at=?,updated_by='user',session_id='' WHERE workspace_id=?", content, identity.After(n.UpdatedAt), id)
 	return changed(r, err)
 }
 func (d *DB) Setting(key string) (string, error) {
@@ -121,4 +144,27 @@ func (d *DB) Setting(key string) (string, error) {
 func (d *DB) SetSetting(key, value string) error {
 	_, err := d.Exec("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, value)
 	return err
+}
+
+// SaveNoteIfUnchanged prevents an autosave from overwriting an agent append or another window's edit.
+func (d *DB) SaveNoteIfUnchanged(id, content, expected string) error {
+	if len(content) > 4<<20 {
+		return errors.New("note exceeds 4 MB")
+	}
+	note, err := d.Note(id)
+	if err != nil {
+		return err
+	}
+	result, err := d.Exec("UPDATE notes SET content=?,updated_at=?,updated_by='user',session_id='' WHERE workspace_id=? AND content=?", content, identity.After(note.UpdatedAt), id, expected)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errors.New("notes changed outside this editor; your draft is preserved. Use Compare with saved note to review and merge the latest changes.")
+	}
+	return nil
 }

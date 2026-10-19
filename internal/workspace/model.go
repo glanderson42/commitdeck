@@ -6,6 +6,7 @@ func ID() string  { return identity.ID() }
 func Now() string { return identity.Now() }
 
 type Workspace struct {
+	Lifecycle    string `json:"lifecycle"`
 	ID           string `json:"id"`
 	ExternalKey  string `json:"externalKey"`
 	Title        string `json:"title"`
@@ -19,6 +20,8 @@ type Workspace struct {
 	UpdatedAt    string `json:"updatedAt"`
 }
 type Note struct {
+	UpdatedBy   string `json:"updatedBy"`
+	SessionID   string `json:"sessionId"`
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspaceId"`
 	Content     string `json:"content"`
@@ -26,6 +29,8 @@ type Note struct {
 	UpdatedAt   string `json:"updatedAt"`
 }
 type Todo struct {
+	UpdatedBy   string `json:"updatedBy"`
+	SessionID   string `json:"sessionId"`
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspaceId"`
 	Title       string `json:"title"`

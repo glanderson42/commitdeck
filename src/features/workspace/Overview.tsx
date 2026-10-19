@@ -1,5 +1,8 @@
+import { WorkspaceSkill } from "../agents/WorkspaceSkill";
+import { WorkflowsPane } from "../workflows/WorkflowsPane";
+import { rpc } from "../../services/api";
 import { GitPullRequest, Bot, ListTodo, ArrowUpRight } from "lucide-react";
-import type { Detail, Tab } from "../../types";
+import type { Detail, Tab, Provider } from "../../types";
 import { AttentionBadge, ExternalLink } from "../../components/ui";
 import {
   PermissionQueue,
@@ -11,11 +14,19 @@ export function Overview({
   setTab,
   refresh,
   onSession,
+  providers,
+  onAction,
+  workflowIntent,
+  onHandled,
 }: {
   detail: Detail;
   setTab: (t: Tab) => void;
   refresh: () => Promise<void>;
   onSession: (id: string) => void;
+  providers: Provider[];
+  onAction: (s: string) => void;
+  workflowIntent?: boolean;
+  onHandled: () => void;
 }) {
   const complete = d.todos.filter((t) => t.completed).length,
     p = d.pr?.data;
@@ -23,8 +34,72 @@ export function Overview({
     <div className="overview">
       <header className="overview-status">
         <AttentionBadge value={d.workspace.attention} />
-        <span className="muted">{d.workspace.status}</span>
+        <span className="muted">{d.workspace.lifecycle || "BACKLOG"}</span>
       </header>
+      <div className="integration-actions">
+        <WorkspaceSkill
+          id={d.workspace.id}
+          disabled={d.workspace.archived || !d.workspace.worktreePath}
+        />
+        <button
+          disabled={
+            d.workspace.archived ||
+            !d.workspace.repoPath ||
+            !!d.workspace.worktreePath
+          }
+          onClick={() => onAction("start-work")}
+        >
+          Start Work
+        </button>
+        <button
+          disabled={d.workspace.archived}
+          onClick={() => onAction("start-agent")}
+        >
+          Start Agent
+        </button>
+        <button
+          disabled={!d.workspace.worktreePath || d.workspace.archived}
+          onClick={() => onAction("new-terminal")}
+        >
+          New Terminal
+        </button>
+        <button
+          disabled={d.workspace.archived || !d.workspace.branch}
+          onClick={() => onAction("create-pr")}
+        >
+          Create PR
+        </button>
+        <button
+          disabled={d.workspace.archived}
+          onClick={() =>
+            void rpc("lifecycle.set", {
+              id: d.workspace.id,
+              action:
+                d.workspace.lifecycle === "BLOCKED" ? "CODING" : "BLOCKED",
+              confirm: true,
+            })
+              .then(refresh)
+              .catch((e) => window.alert(String(e)))
+          }
+        >
+          {" "}
+          {d.workspace.lifecycle === "BLOCKED" ? "Unblock" : "Mark Blocked"}
+        </button>
+        <button
+          disabled={d.workspace.archived}
+          onClick={() =>
+            void rpc("lifecycle.set", {
+              id: d.workspace.id,
+              action: "DONE",
+              confirm: true,
+            })
+              .then(refresh)
+              .catch((e) => window.alert(String(e)))
+          }
+        >
+          Mark Done
+        </button>
+      </div>
       <div className="overview-summary">
         <button onClick={() => setTab("Tasks")}>
           <ListTodo size={17} />
@@ -64,6 +139,33 @@ export function Overview({
           <ArrowUpRight size={13} />
         </button>
       </div>
+      <section className="overview-terminals">
+        <h3>
+          Terminals{" "}
+          <span className="muted">
+            {d.terminals?.length ?? 0} tabs ·{" "}
+            {d.terminals?.filter((t) => t.status === "running").length ?? 0}{" "}
+            shells running
+          </span>
+        </h3>
+        {d.terminals?.map((t) => (
+          <button key={t.id} onClick={() => setTab("Terminal")}>
+            <i
+              className={`dot ${t.status === "running" ? "green" : "muted"}`}
+            />
+            {t.title} <span className="muted">{t.status}</span>
+          </button>
+        ))}
+      </section>
+      <WorkflowsPane
+        workspaceId={d.workspace.id}
+        providers={providers}
+        onSession={onSession}
+        refresh={refresh}
+        disabled={d.workspace.archived || !d.workspace.worktreePath}
+        intent={workflowIntent}
+        onHandled={onHandled}
+      />
       {d.permissions.some((r) => r.status === "pending") && (
         <section>
           <h3>Needs approval</h3>

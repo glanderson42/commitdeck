@@ -1,5 +1,13 @@
 export type Tab =
-  "Overview" | "Agent" | "Tasks" | "Notes" | "Git" | "PR" | "Jira";
+  | "Overview"
+  | "Agent"
+  | "Terminal"
+  | "Tasks"
+  | "Notes"
+  | "Git"
+  | "PR"
+  | "Jira"
+  | "Activity";
 export type Attention =
   | "AGENT_RUNNING"
   | "MERGE_CONFLICT"
@@ -13,6 +21,7 @@ export type Attention =
   | "NO_PR"
   | "IDLE";
 export interface Workspace {
+  lifecycle: string;
   id: string;
   externalKey: string;
   title: string;
@@ -27,6 +36,8 @@ export interface Workspace {
   attention: Attention;
 }
 export interface Note {
+  updatedBy?: string;
+  sessionId?: string;
   id: string;
   workspaceId: string;
   content: string;
@@ -34,6 +45,8 @@ export interface Note {
   updatedAt: string;
 }
 export interface Todo {
+  updatedBy?: string;
+  sessionId?: string;
   id: string;
   workspaceId: string;
   title: string;
@@ -43,6 +56,9 @@ export interface Todo {
   updatedAt: string;
 }
 export interface Session {
+  imported?: boolean;
+  resumeSupported?: boolean;
+  sourceCwd?: string;
   id: string;
   workspaceId: string;
   provider: string;
@@ -105,6 +121,7 @@ export interface Issue {
   updatedAt: string;
 }
 export interface PullRequest {
+  headOid: string;
   number: number;
   title: string;
   url: string;
@@ -123,6 +140,8 @@ export interface PullRequest {
   reviews: { author: string; state: string; body: string }[];
   description: string;
   unresolvedComments: {
+    threadId?: string;
+    commentId?: number;
     author: string;
     body: string;
     path: string;
@@ -134,6 +153,7 @@ export interface Cache<T> {
   updatedAt: string;
 }
 export interface Detail {
+  terminals: TerminalTab[];
   workspace: Workspace;
   note: Note;
   todos: Todo[];
@@ -145,6 +165,10 @@ export interface Detail {
   pr: Cache<PullRequest | null> | null;
 }
 export interface Layout {
+  terminalSplit?: boolean;
+  terminalHeight?: number;
+  terminals?: Record<string, string>;
+  gitWidth?: number;
   view: "dashboard" | "workspace";
   dashboardCollapsed: Record<string, boolean>;
   selected?: string;
@@ -167,12 +191,23 @@ export interface Bootstrap {
   dataDir: string;
 }
 export interface CoreEvent {
-  type: "agent_event" | "sessions_changed" | "permissions_changed" | "activity";
+  type:
+    | "agent_event"
+    | "sessions_changed"
+    | "permissions_changed"
+    | "activity"
+    | "terminal_output"
+    | "terminals_changed";
+  terminalId?: string;
+  sequence?: number;
+  data?: string;
   event?: AgentEvent;
   workspaceId?: string;
 }
 
 export interface DashboardRow extends Workspace {
+  workflowWaiting?: number;
+  workflowFailed?: number;
   group: string;
   sessions: Session[];
   pr: PullRequest | null;
@@ -191,6 +226,7 @@ export type Purpose =
   | "documentation"
   | "custom";
 export interface ContextOptions {
+  includeWorkspaceTools?: boolean;
   maxCharacters: number;
   includeIssue: boolean;
   includeNotes: boolean;
@@ -260,4 +296,47 @@ export interface ActivityEvent {
   notify: boolean;
   read: boolean;
   createdAt: string;
+}
+
+export interface TerminalTab {
+  id: string;
+  workspaceId: string;
+  title: string;
+  cwd: string;
+  status: string;
+  createdAt: string;
+  lastUsedAt: string;
+}
+export interface DiscoveredSession {
+  provider: string;
+  externalSessionId: string;
+  title: string;
+  cwd: string;
+  repoPath: string;
+  branch: string;
+  updatedAt: string;
+  resumeSupported: boolean;
+  source: string;
+  suggestedWorkspaceId: string;
+  confidence: string;
+  imported: boolean;
+}
+export interface WorkflowStep {
+  id: string;
+  workflowId: string;
+  position: number;
+  purpose: Purpose;
+  provider: string;
+  status: string;
+  sessionId: string;
+  handoff: string;
+}
+export interface AgentWorkflow {
+  id: string;
+  workspaceId: string;
+  name: string;
+  status: string;
+  steps: WorkflowStep[];
+  createdAt: string;
+  updatedAt: string;
 }

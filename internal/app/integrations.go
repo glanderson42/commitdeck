@@ -53,6 +53,19 @@ func (a *App) refreshPR(ctx context.Context, id string) (any, error) {
 }
 func (a *App) recordPR(id string, p *pullrequest.PullRequest) {
 	activity := a.Agents.Activity
+	if p != nil {
+		// Serialize the local lifecycle transition with archive/delete. PR refresh
+		// may finish after archive, in which case ARCHIVED must remain authoritative.
+		a.lifecycle.Lock()
+		if w, err := a.DB.Workspace(id); err == nil && !w.Archived {
+			state := workspace.DevelopmentState(w, p)
+			_, _ = a.DB.Exec("UPDATE workspaces SET lifecycle=? WHERE id=? AND archived=0", state, id)
+		}
+		a.lifecycle.Unlock()
+
+		_ = activity.Transition(id, "pr_state", p.State, "pr_"+strings.ToLower(p.State), "Pull request "+strings.ToLower(p.State), p.State == "MERGED")
+		_ = activity.Transition(id, "review_comments", fmt.Sprint(p.ReviewCommentCount), "review_comment_received", "Pull request review comments updated", p.ReviewCommentCount > 0)
+	}
 	if p == nil {
 		_ = activity.Transition(id, "pr", "none", "workspace_refreshed", "No open pull request for this branch", false)
 		return

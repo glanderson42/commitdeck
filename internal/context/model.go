@@ -9,6 +9,7 @@ import (
 )
 
 type Options struct {
+	IncludeWorkspaceTools bool `json:"includeWorkspaceTools"`
 	MaxCharacters         int  `json:"maxCharacters"`
 	IncludeIssue          bool `json:"includeIssue"`
 	IncludeNotes          bool `json:"includeNotes"`
@@ -18,7 +19,7 @@ type Options struct {
 	IncludeSessionSummary bool `json:"includeSessionSummary"`
 }
 
-func Defaults() Options           { return Options{12000, true, true, true, true, true, true} }
+func Defaults() Options           { return Options{true, 12000, true, true, true, true, true, true} }
 func Normalize(o Options) Options { o.MaxCharacters = max(1200, min(64000, o.MaxCharacters)); return o }
 
 type GitContext struct {

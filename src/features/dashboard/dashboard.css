@@ -115,10 +115,9 @@
 }
 .dashboard-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1.7fr) minmax(140px, 1fr) minmax(
-      125px,
-      0.8fr
-    ) 55px 15px;
+  grid-template-columns:
+    minmax(190px, 1.7fr) minmax(140px, 1fr) minmax(125px, 0.8fr)
+    55px 15px;
   gap: 16px;
   align-items: center;
   width: 100%;
@@ -701,10 +700,9 @@
     padding: 24px;
   }
   .dashboard-row {
-    grid-template-columns: minmax(175px, 1.7fr) minmax(120px, 1fr) minmax(
-        100px,
-        0.8fr
-      ) 12px;
+    grid-template-columns:
+      minmax(175px, 1.7fr) minmax(120px, 1fr) minmax(100px, 0.8fr)
+      12px;
     gap: 10px;
   }
   .dashboard-row > time {

@@ -1,13 +1,14 @@
 package database
 
 import (
+	"commitdeck/internal/identity"
 	"commitdeck/internal/workspace"
 	"errors"
 	"strings"
 )
 
 func (d *DB) Todos(id string) ([]workspace.Todo, error) {
-	r, err := d.Query("SELECT id,workspace_id,title,completed,position,created_at,updated_at FROM todos WHERE workspace_id=? ORDER BY position,id", id)
+	r, err := d.Query("SELECT id,workspace_id,title,completed,position,created_at,updated_at,updated_by,session_id FROM todos WHERE workspace_id=? ORDER BY position,id", id)
 	if err != nil {
 		return nil, err
 	}
@@ -15,7 +16,7 @@ func (d *DB) Todos(id string) ([]workspace.Todo, error) {
 	out := []workspace.Todo{}
 	for r.Next() {
 		var t workspace.Todo
-		if err = r.Scan(&t.ID, &t.WorkspaceID, &t.Title, &t.Completed, &t.Position, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err = r.Scan(&t.ID, &t.WorkspaceID, &t.Title, &t.Completed, &t.Position, &t.CreatedAt, &t.UpdatedAt, &t.UpdatedBy, &t.SessionID); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -27,14 +28,33 @@ func (d *DB) SaveTodo(t workspace.Todo) (workspace.Todo, error) {
 	if t.Title == "" || len(t.Title) > 1000 {
 		return t, errors.New("task title must contain 1–1000 characters")
 	}
-	t.UpdatedAt = workspace.Now()
+	if t.UpdatedBy == "" {
+		t.UpdatedBy = "user"
+	}
+	expected := t.UpdatedAt
+	t.UpdatedAt = identity.After(expected)
 	if t.ID == "" {
 		t.ID = workspace.ID()
 		t.CreatedAt = t.UpdatedAt
-		_, err := d.Exec("INSERT INTO todos VALUES (?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM todos WHERE workspace_id=?),?,?)", t.ID, t.WorkspaceID, t.Title, t.Completed, t.WorkspaceID, t.CreatedAt, t.UpdatedAt)
+		_, err := d.Exec("INSERT INTO todos (id,workspace_id,title,completed,position,created_at,updated_at,updated_by,session_id) VALUES (?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM todos WHERE workspace_id=?),?,?,?,?)", t.ID, t.WorkspaceID, t.Title, t.Completed, t.WorkspaceID, t.CreatedAt, t.UpdatedAt, t.UpdatedBy, t.SessionID)
 		return t, err
 	}
-	r, err := d.Exec("UPDATE todos SET title=?,completed=?,updated_at=? WHERE id=? AND workspace_id=?", t.Title, t.Completed, t.UpdatedAt, t.ID, t.WorkspaceID)
+	query := "UPDATE todos SET title=?,completed=?,updated_at=?,updated_by=?,session_id=? WHERE id=? AND workspace_id=?"
+	args := []any{t.Title, t.Completed, t.UpdatedAt, t.UpdatedBy, t.SessionID, t.ID, t.WorkspaceID}
+	if expected != "" {
+		query += " AND updated_at=?"
+		args = append(args, expected)
+	}
+	r, err := d.Exec(query, args...)
+	if err == nil && expected != "" {
+		n, e := r.RowsAffected()
+		if e != nil {
+			return t, e
+		}
+		if n == 0 {
+			return t, errors.New("task changed; refresh and retry your edit")
+		}
+	}
 	return t, changed(r, err)
 }
 func (d *DB) DeleteTodo(workspaceID, id string) error {
@@ -60,7 +80,11 @@ func (d *DB) ReorderTodos(id string, ids []string) error {
 			return errors.New("duplicate task in ordering")
 		}
 		seen[tid] = true
-		r, e := tx.Exec("UPDATE todos SET position=?,updated_at=? WHERE id=? AND workspace_id=?", i, workspace.Now(), tid, id)
+		var previous string
+		if err = tx.QueryRow("SELECT updated_at FROM todos WHERE id=? AND workspace_id=?", tid, id).Scan(&previous); err != nil {
+			return err
+		}
+		r, e := tx.Exec("UPDATE todos SET position=?,updated_at=? WHERE id=? AND workspace_id=?", i, identity.After(previous), tid, id)
 		if e = changed(r, e); e != nil {
 			return e
 		}

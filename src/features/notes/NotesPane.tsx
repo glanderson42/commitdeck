@@ -6,7 +6,8 @@ import {
   FileText,
   LoaderCircle,
 } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { MergeNote } from "./MergeNote";
 import { Markdown } from "../../components/Markdown";
 import { notes } from "../../store/notes";
 import type { Layout } from "../../types";
@@ -14,12 +15,15 @@ export function NotesPane({
   id,
   mode,
   setMode,
+  updatedBy,
 }: {
   id: string;
+  updatedBy?: string;
   mode: Layout["noteMode"];
   setMode: (v: Layout["noteMode"]) => void;
 }) {
   const draft = useSyncExternalStore(notes.subscribe, () => notes.get(id));
+  const [merge, setMerge] = useState(false);
   if (!draft) return <div className="panel-padding muted">Loading notes…</div>;
   return (
     <div className="notes-panel">
@@ -27,6 +31,9 @@ export function NotesPane({
         <div className="toolbar-title">
           <FileText size={16} />
           Workspace notes
+          {updatedBy && updatedBy !== "user" && (
+            <small className="attribution">Updated by {updatedBy}</small>
+          )}
         </div>
         <div className="toolbar-actions">
           <span
@@ -71,6 +78,9 @@ export function NotesPane({
       {draft.error && (
         <div role="alert" className="error-box">
           {draft.error} · Your draft is kept on this device.
+          <button onClick={() => setMerge(true)}>
+            Compare with saved note
+          </button>
         </div>
       )}
       <div className={`note-columns ${mode}`}>
@@ -106,6 +116,7 @@ export function NotesPane({
           {draft.content.length.toLocaleString()} characters · Autosave enabled
         </span>
       </div>
+      {merge && <MergeNote id={id} onClose={() => setMerge(false)} />}
     </div>
   );
 }

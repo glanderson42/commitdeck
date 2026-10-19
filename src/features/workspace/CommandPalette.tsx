@@ -22,10 +22,9 @@ export function CommandPalette({
   const matches = useMemo(
     () =>
       commands.filter((c) =>
-        `${c.label} ${c.group} ${c.searchText ?? ""}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
+        fuzzyMatch(query, `${c.label} ${c.group} ${c.searchText ?? ""}`),
       ),
+
     [commands, query],
   );
   useEffect(() => {
@@ -114,4 +113,15 @@ export function CommandPalette({
       </div>
     </Modal>
   );
+}
+
+export function fuzzyMatch(query: string, text: string) {
+  let cursor = 0;
+  const target = text.toLowerCase();
+  for (const ch of query.toLowerCase().replace(/\s+/g, "")) {
+    const next = target.indexOf(ch, cursor);
+    if (next < 0) return false;
+    cursor = next + 1;
+  }
+  return true;
 }

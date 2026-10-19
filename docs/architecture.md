@@ -12,21 +12,24 @@ flowchart LR
   Go --> Keychain[OS credential storage]
   Go --> Git[Git CLI]
   Go --> Agents[Codex / Claude / OpenCode CLI]
-  Go --> Jira[Jira HTTPS read API]
+  Go --> Jira[Jira HTTPS read/write API]
+  Agents --> Helper[Scoped workspace tool helper]
+  Helper --> Broker[Loopback capability broker]
+  Broker --> SQLite
   Go --> GH[gh CLI]
 ```
 
-The desktop application IPC exposes no localhost API. The optional OpenCode adapter owns a separate password-protected loopback server for its supported provider transport. Rust creates a sidecar with piped stdin/stdout, correlates request IDs, and emits normalized backend events to the webview. The frontend cannot choose arbitrary programs or shell arguments. Native capabilities permit only folder selection and opening links; process/filesystem operations are Go methods.
+Desktop application RPC uses private pipes. Tool-enabled agent turns use an additional ephemeral loopback broker with a per-turn capability, separate from desktop RPC. The optional OpenCode adapter owns a separate password-protected loopback server for its supported provider transport. Rust creates a sidecar with piped stdin/stdout, correlates request IDs, and emits normalized backend events to the webview. The frontend invokes named backend operations; integrated terminal input deliberately grants the developer ordinary shell access. Native capabilities permit only folder selection and opening links; process/filesystem operations are Go methods.
 
 The browser development bridge in `scripts/dev-core.ts` launches the same sidecar and provides same-origin RPC plus server-sent events through Vite. It validates Host/Origin and JSON content type and has a request-size limit. It is disabled in desktop and test modes. There is no production browser server.
 
 ## Workspace model
 
-`internal/workspace` defines the local `Workspace`: a stable random ID, optional external key, title/status, repository/worktree/branch, tracker ID, archive flag, and timestamps. The random ID is the relational key; a Jira issue key is not the database identity. Multiple workspaces may represent the same ticket and get different worktree directories.
+`internal/workspace` defines the local `Workspace`: a stable random ID, optional external key, title/status, repository/worktree/branch, tracker ID, independent local development lifecycle, archive flag, and timestamps. The random ID is the relational key; a Jira issue key is not the database identity. Multiple workspaces may represent the same ticket and get different worktree directories.
 
 Notes and TODOs belong to exactly one workspace. The initial note is created atomically with the workspace. TODO order is replaced transactionally: the request must contain every task exactly once and every ID must belong to that workspace. Workspaces can be archived without destroying their context. Deletion requires confirmation and cascades local records while retaining Git/provider files.
 
-The React `useDeck` hook caches details by workspace ID. Switching tickets uses the cache immediately and refreshes from local SQLite. Notes live in a separate keyed draft store so unmounting a tab cannot drop pending writes. Its debounce is per workspace, saves are serialized, and a newer draft cannot be overwritten by a slower earlier write. Local draft backups survive a failed write or webview restart. UI layout stores selected workspace, per-workspace tab/session/diff selection, pane sizes, notes mode, and context-pane visibility, Dashboard/workspace view, and Dashboard section collapse choices. The app launches into Dashboard with the last workspace still available. Prompt drafts are keyed by session in webview storage.
+The React `useDeck` hook caches details by workspace ID. Switching tickets uses the cache immediately and refreshes from local SQLite. Notes live in a separate keyed draft store so unmounting a tab cannot drop pending writes. Its debounce is per workspace, saves are serialized, and a newer draft cannot be overwritten by a slower earlier write. Local draft backups survive a failed write or webview restart. Compare-and-swap note writes prevent a stale user autosave or agent append/replacement from overwriting another edit. Clean editors accept newer server notes; conflicting dirty drafts are preserved with their original base version and a visible merge-review action. Unknown-base legacy backups are never replayed over saved notes automatically. UI layout stores selected workspace, per-workspace tab/session/diff selection, pane sizes, notes mode, and context-pane visibility, Dashboard/workspace view, and Dashboard section collapse choices. The app launches into Dashboard with the last workspace still available. Prompt drafts are keyed by session in webview storage.
 
 ## Backend modules
 
@@ -71,6 +74,14 @@ Creating a session persists metadata and the exact previewed context snapshot wi
 - **OpenCode:** a bridge mode of the bundled Go executable starts an owned v1-compatible `serve` process on loopback with per-process Basic authentication. Uses async prompts, SSE, and permission reply endpoints. Decisions are persisted as approved only after successful HTTP acknowledgement. Redirects are refused and HTTP startup/header/request times bounded.
 
 Supported UI events remain `text`, `status`, `command`, `tool`, `file_changed`, `diff`, `permission_request`, `error`, and `complete`. Unknown events are ignored/refused rather than displayed as raw JSON. Completed text/tool output is rendered; token deltas are not yet rendered live. User prompts and normalized agent output remain in local session history.
+
+Normalized event text, commands, file paths, diffs, tool names, and errors pass through secret-pattern redaction before streaming and before insertion into SQLite. Database insertion enforces this even for callers outside the agent manager. New and imported sessions also redact descriptive titles, purposes and source-directory metadata; provider IDs needed for resume remain intact. Redaction is best effort for recognized patterns; this does not scrub historical rows or guarantee detection of arbitrary secrets. Provider permission replies keep their original runtime inputs.
+
+Prompt editing and ticket switching retain the full draft in memory. Webview recovery copies pass through the same backend redactor before local storage; unavailable sanitization pauses backup rather than writing raw input. Older drafts are sanitized when the Agent pane opens and the backend is available. Restored copies may therefore contain redaction markers; actual sending still uses the current in-memory prompt the user reviewed.
+
+Context redaction runs again after assembly and budget clipping so section boundaries cannot make otherwise valid previews fail snapshot validation. GitHub writes snapshot local workspace/repository state under the lifecycle lock, then release it before network calls; unrelated workspace, agent and terminal operations remain available. The workspace-tool HTTP envelope allows the worst-case JSON expansion of a 4 MiB note and rejects larger bodies with HTTP 413; the note content limit remains 4 MiB.
+
+New timestamps use fixed nanosecond precision and an atomic monotonic sequence, including on Windows clocks with coarse resolution. TODO/notes updates advance beyond the persisted revision so clock rollback or restart cannot reuse that optimistic-concurrency token. These remain RFC 3339 timestamps; existing values require no migration.
 
 ## Permission workflow
 
@@ -117,7 +128,7 @@ Import reads the issue, creates a local workspace/main note, and caches the norm
 
 `pullrequest.PullRequestService` exposes branch lookup, checks, and reviews using normalized domain types. `github.CLI` parses a github.com origin remote and runs `gh pr list` with explicit repository and branch flags. The response includes normalized PR metadata, latest effective approvals/change requests, reviewers, reviews, and check status. A separate paginated gh API read counts inline review comments; GraphQL review threads add unresolved feedback. Extremely long threads include an explicit incomplete-cache warning. Credentials remain under gh's control.
 
-The MVP tracks open PRs. A successful lookup with no open PR caches `null`, clearing stale open-PR attention. A failed lookup preserves the cache. Check conclusions are normalized to success/failure/pending. GitHub Enterprise, alternative remotes, and closed/merged PR timelines are extension points.
+Branch lookup includes open, closed, and merged PRs so merge completion remains visible and drives local lifecycle. A lookup with no matching PR caches `null`; a failed lookup preserves the cache. Check conclusions are normalized to success/failure/pending. GitHub Enterprise and alternative remotes remain extension points.
 
 ## Attention priority
 
@@ -147,11 +158,11 @@ An OS file lock prevents a second backend from opening the same data directory a
 
 Paths are canonicalized and repositories validated before attachment. Branch names are generated from sanitized ticket/title text and checked with Git. Worktree folders include a workspace-ID suffix. Existing registered worktrees are detected; existing branches are reused only if not checked out elsewhere. Existing filesystem directories are not overwritten.
 
-Removal requires explicit confirmation, rejects the primary repository, validates worktree registration, refuses active agents, and checks for dirty/untracked/ignored files. `git worktree remove` runs without force. Branches are never deleted. No reset, clean, commit, push, merge, or shell command string is generated by the app. Staged and unstaged diffs disable external diff/textconv tools. Untracked previews reject escaping symlinks, nonregular files, binary content, and files larger than 2 MB.
+Removal requires explicit confirmation, rejects the primary repository, validates worktree registration, refuses active agents and running terminals, and checks for dirty/untracked/ignored files. `git worktree remove` runs without force. Branches are never deleted. Local Git never resets, cleans, commits, pushes, deletes branches, or evaluates concatenated shell strings. Confirmed GitHub squash merge is a separate remote action with head-SHA and readiness guards. Staged and unstaged diffs disable external diff/textconv tools. Untracked previews reject escaping symlinks, nonregular files, binary content, and files larger than 2 MB.
 
 ## Process management and shutdown
 
-The Go manager maps session IDs to only the `exec.Cmd` instances it created. SQLite tracks workspace/provider/session/status/PID metadata. A lifecycle mutex prevents starting an agent while the same application removes or reattaches its worktree. Archiving/deleting a workspace or removing its worktree is refused while an agent is active.
+The Go manager maps session IDs to only the `exec.Cmd` instances it created. SQLite tracks workspace/provider/session/status/PID metadata. A lifecycle mutex prevents starting an agent while the same application removes or reattaches its worktree. Archiving/deleting a workspace or removing its worktree is refused while an agent or terminal is active.
 
 On Unix, each turn gets its own process group. Cancellation kills that owned group; Windows uses `taskkill /PID <owned-pid> /T /F`. There is no name-based process killing. Stream reader errors, command failures, cancellation, completion, and external session IDs are persisted. A crash in one agent does not stop others.
 
@@ -161,4 +172,24 @@ Tauri closes sidecar stdin on exit. Go cancels outstanding requests, stops its a
 
 Tests cover local workflows and real Git worktrees, SQLite restart/cascades/order, integration normalization, attention, safe paths, concurrent/cancelled/crashed agents, note write races and recovery, and keyboard tasks. `scripts/smoke.mjs` drives real stdio IPC with a disposable repository and data directory. External account authentication is a separate manual setup step; fixtures are never represented as live service verification.
 
-Add migrations for schema changes, implement a new `Runtime` for agents, replace the issue-tracker factory for other trackers, or implement `PullRequestService` for another forge. New interactive providers implement conversation state machines without changing the domain renderer. Additional context sources, permission categories, or transition types can extend their respective packages. Future improvements include capability/version negotiation, interactive questions, embedded terminals, virtualized history, signed releases, and safe Git write operations.
+Add migrations for schema changes, implement a new `Runtime` for agents, replace the issue-tracker factory for other trackers, or implement `PullRequestService` for another forge. New interactive providers implement conversation state machines without changing the domain renderer. Additional context sources, permission categories, or transition types can extend their respective packages. Future improvements include capability/version negotiation, interactive questions, virtualized history, signed releases, automatic updates, and local Git stage/commit/push flows.
+
+## Phase 3 services and migration
+
+Migration `003_daily_workspace.sql` adds `terminals`, `agent_imports`, `agent_workflows`, `agent_workflow_steps`, and `workspace_tool_events`. It extends existing workspace rows with `lifecycle`, notes/TODOs with `updated_by` and `session_id`, and agent sessions with import/resume/source-CWD metadata. Existing context, caches, permissions, notes, tasks, and transcripts remain. Lifecycle initializes to Backlog, Coding for existing worktrees, or Archived. Attribution defaults to the user.
+
+`internal/terminal` owns real Unix PTYs / Windows ConPTY, validates current worktree CWD, streams sequenced base64 events, and keeps 256 KiB memory buffers. Persisted tabs become stopped on restart. xterm.js is loaded when needed and retains view state across workspace/tab navigation. Terminal selections enter an explicit editable agent prompt. Dock size, split state, terminal selection, Git-list width, and per-workspace tabs use the existing layout store. See [terminal.md](terminal.md).
+
+`internal/agents/discovery` independently queries provider metadata and returns normalized discovered sessions and warnings. It isolates Claude JSONL parsing, validates IDs, redacts known secret patterns, scores path/branch/key matches, and records explicit imports with transactional duplicate prevention. Imported IDs reuse existing adapters; readonly metadata cannot be sent prompts. No provider transcripts or credentials are copied. See [session-import.md](session-import.md).
+
+`internal/workspacetools` supplies a session-scoped helper protocol. An active, tool-enabled context snapshot allows the manager to bind a random capability for that turn and pass connection details only through its process environment. `commitdeck-core --workspace-tool` acts as the client and never opens SQLite. The broker accepts only narrow knowledge operations against the bound workspace; destructive edits enter the existing permission queue, never reusable rules. Known secret patterns are redacted; note updates have optimistic concurrency checks. Provider skill files contain no capabilities and require confirmed creation with no overwrite or filesystem-root escape. See [agent-skill.md](agent-skill.md).
+
+`issuetracker.WritableIssueTracker` adds available transitions, comments, and summary updates. `pullrequest.WritableService` adds normalized actions executed by the isolated gh adapter. Frontend dialogs require confirmation; backend use cases check confirmation, scope to the workspace repository/issue, re-read the PR, and enforce merge-head/readiness guards. API bodies use JSON/stdin or explicit process arguments. Jira transitions are revalidated, and review replies map to their root comment. Remote success followed by cache-refresh failure is reported as success with a refresh warning so users do not accidentally post again. See [workflows.md](workflows.md).
+
+`workspace.DevelopmentState` owns the deterministic local lifecycle derived from existing worktree and normalized PR state, with explicit Done/Blocked/Archived states. Attention remains separately prioritized for dashboard decisions. Start Work previews branch/base/fetch/worktree operations; archive preserves all relational context and cleanup stays opt-in and guarded.
+
+`internal/workflows` persists ordered steps and session links, starts only one explicitly approved step at a time, and receives completion callbacks from the existing agent manager. It builds fresh selected context and a bounded/redacted last-assistant handoff, never a full prior conversation. In-flight steps become failed after restart; failures require retry/skip/stop, and stopped workflows cannot reactivate from late process callbacks. Step completion/failure feeds deduplicated activity notifications. Manual sessions remain independent.
+
+New frontend feature modules cover terminal, workflow, import, skill, and remote action flows. Overview composes their summaries and launch actions. Activity is a first-class tab. Fuzzy palette commands and shortcuts share the same actions; app shortcuts yield to terminal input. Errors/loading state stay scoped to each panel.
+
+`npm run test:phase3` drives a real sidecar, PTY, helper capability, permission denial, attributed knowledge changes, explicit workflow handoff, and stopped terminal recovery using a disposable database and fake provider CLI. Backend tests cover scoped/expired capabilities, write payloads/guards, migration preservation, PTYs, matching/import duplication, lifecycle, note races, and workflow failure/retry. Native Windows ConPTY and live authenticated provider/Jira/GitHub writes remain manual verification items; fixtures are not production claims.

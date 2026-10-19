@@ -16,12 +16,16 @@ type Review struct {
 	Body   string `json:"body"`
 }
 type Feedback struct {
-	Author string `json:"author"`
-	Body   string `json:"body"`
-	Path   string `json:"path"`
-	URL    string `json:"url"`
+	ReplyToID int    `json:"replyToId"`
+	ThreadID  string `json:"threadId"`
+	CommentID int    `json:"commentId"`
+	Author    string `json:"author"`
+	Body      string `json:"body"`
+	Path      string `json:"path"`
+	URL       string `json:"url"`
 }
 type PullRequest struct {
+	HeadOID            string     `json:"headOid"`
 	Number             int        `json:"number"`
 	Title              string     `json:"title"`
 	Description        string     `json:"description"`

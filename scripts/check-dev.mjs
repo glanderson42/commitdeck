@@ -9,6 +9,8 @@ process.env.COMMITDECK_DATA_DIR = mkdtempSync(
 );
 const server = await createServer({
   configFile: "vite.config.ts",
+  // This test exercises IPC/restart, not frontend dependency optimization.
+  optimizeDeps: { noDiscovery: true, include: [] },
   server: { host: "127.0.0.1" },
 });
 const bootstrap = async () => {

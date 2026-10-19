@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowUp,
   Bot,
+  Download,
   ChevronDown,
   CircleCheck,
   FileCode2,
@@ -16,7 +17,8 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { promptDrafts } from "../../store/prompts";
 import { Markdown } from "../../components/Markdown";
 import { Empty, ErrorBox } from "../../components/ui";
 import { message, rpc } from "../../services/api";
@@ -87,6 +89,7 @@ export function AgentPane({
   requestedProvider,
   clearRequest,
   requestedPurpose,
+  onImport,
 }: {
   detail: Detail;
   providers: Provider[];
@@ -98,6 +101,7 @@ export function AgentPane({
   requestedProvider?: string;
   clearRequest: () => void;
   requestedPurpose?: Purpose;
+  onImport: () => void;
 }) {
   const w = detail.workspace;
   const sessions = detail.sessions;
@@ -105,28 +109,17 @@ export function AgentPane({
   const [showNew, setShowNew] = useState(false);
   const [provider, setProvider] = useState("codex");
   const [showContext, setShowContext] = useState(false);
-  const [prompts, setPrompts] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(
-        window.localStorage.getItem("commitdeck.prompts") || "{}",
-      );
-    } catch {
-      return {};
-    }
-  });
+  const prompts = useSyncExternalStore(
+    promptDrafts.subscribe,
+    promptDrafts.get,
+  );
+  const setPrompts = promptDrafts.set;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [visible, setVisible] = useState(200);
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        "commitdeck.prompts",
-        JSON.stringify(prompts),
-      );
-    } catch {
-      /* Prompt remains available for this session. */
-    }
-  }, [prompts]);
+    void promptDrafts.persist();
+  }, []);
   const bottom = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const requestHandled = useRef("");
@@ -212,6 +205,10 @@ export function AgentPane({
           <Plus size={14} />
           New session
         </button>
+        <button className="new-session" onClick={onImport}>
+          <Download size={14} />
+          Import session
+        </button>
         <div className="session-sidebar-bottom">
           <GitBranch size={13} />
           <span>{w.branch || "No worktree connected"}</span>
@@ -251,6 +248,13 @@ export function AgentPane({
                     {session.status}
                   </span>
                 </div>
+                {session.imported && (
+                  <p className="session-purpose">
+                    Imported ·{" "}
+                    {session.resumeSupported ? "Native resume" : "Read only"} ·
+                    Original directory: {session.sourceCwd || "unavailable"}
+                  </p>
+                )}
                 {session.purpose && (
                   <p className="session-purpose">{session.purpose}</p>
                 )}
@@ -338,8 +342,16 @@ export function AgentPane({
                       void send();
                     }
                   }}
-                  disabled={active || w.archived}
+                  disabled={
+                    active ||
+                    w.archived ||
+                    (!!session.imported && !session.resumeSupported)
+                  }
                 />
+                <p className="hint">
+                  Recovery copies redact recognized credentials. Keep secrets
+                  out of prompts.
+                </p>
                 <div className="composer-bottom">
                   <span>
                     <span
@@ -371,7 +383,12 @@ export function AgentPane({
                     <button
                       type="submit"
                       className="send-button"
-                      disabled={!prompt.trim() || busy || w.archived}
+                      disabled={
+                        !prompt.trim() ||
+                        busy ||
+                        w.archived ||
+                        (!!session.imported && !session.resumeSupported)
+                      }
                       aria-label="Send prompt"
                     >
                       <ArrowUp size={17} />

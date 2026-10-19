@@ -13,6 +13,7 @@ import { Markdown } from "../../components/Markdown";
 import { ErrorBox, Modal } from "../../components/ui";
 export const defaultContext: ContextOptions = {
   maxCharacters: 12000,
+  includeWorkspaceTools: true,
   includeIssue: true,
   includeNotes: true,
   includeTodos: true,
@@ -30,6 +31,7 @@ export const purposes: Purpose[] = [
   "custom",
 ];
 const sources = [
+  ["includeWorkspaceTools", "Workspace tools (TODOs and notes)"],
   ["includeIssue", "Jira ticket"],
   ["includeTodos", "TODOs"],
   ["includeNotes", "Notes"],
@@ -95,7 +97,7 @@ export function ContextControls({
           <label key={key}>
             <input
               type="checkbox"
-              checked={options[key]}
+              checked={!!options[key]}
               onChange={(e) =>
                 onOptions({ ...options, [key]: e.target.checked })
               }

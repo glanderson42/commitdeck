@@ -43,6 +43,27 @@ func TestSecretsStayOutOfDatabase(t *testing.T) {
 }
 func (s *memorySecrets) Set(_ string, v string) error { s.token = v; return nil }
 func (s *memorySecrets) Delete(string) error          { s.token = ""; return nil }
+
+func TestPromptRecoveryRedactsWithoutPersistingRawInput(t *testing.T) {
+	a, err := Open(t.TempDir(), func(any) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	params, _ := json.Marshal(map[string]any{"drafts": map[string]string{"s": `Investigate. {"api_key":"synthetic-draft-value"}`}})
+	v, err := a.Call(context.Background(), "drafts.redact", params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := v.(map[string]string)
+	if strings.Contains(result["s"], "synthetic-draft-value") || !strings.Contains(result["s"], "Investigate") {
+		t.Fatal("unsafe recovery copy")
+	}
+	var count int
+	if err = a.DB.QueryRow("SELECT COUNT(*) FROM settings").Scan(&count); err != nil || count != 0 {
+		t.Fatal("raw recovery input persisted", err)
+	}
+}
 func TestLocalWorkflowSurvivesIntegrationFailure(t *testing.T) {
 	data := t.TempDir()
 	a, err := Open(data, func(any) {})

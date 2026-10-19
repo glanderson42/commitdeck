@@ -9,9 +9,14 @@ on:
         description: "Existing version tag to release (for example v0.1.0)"
         required: true
         type: string
+      publish:
+        description: "Publish the verified draft (requires maintainer approval)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -29,28 +34,26 @@ jobs:
         id: checkout
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - name: Verify release version
+      - name: Verify tested main commit and release version
         id: version
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { readFileSync, appendFileSync } from 'node:fs';
-          const json = path => JSON.parse(readFileSync(path, 'utf8'));
-          const version = json('package.json').version;
-          assert.equal(process.env.RELEASE_TAG, `v${version}`, 'Tag must match the application version');
-          assert.equal(json('package-lock.json').version, version, 'npm lockfile version mismatch');
-          assert.equal(json('package-lock.json').packages[''].version, version, 'npm root version mismatch');
-          assert.equal(json('src-tauri/tauri.conf.json').version, version, 'Tauri version mismatch');
-          const cargo = readFileSync('src-tauri/Cargo.toml', 'utf8');
-          assert.equal(cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1], version, 'Cargo version mismatch');
-          appendFileSync(process.env.GITHUB_OUTPUT, `tag=v${version}\nprerelease=${version.split('+')[0].includes('-')}\n`);
-          NODE
+          set -euo pipefail
+          git fetch --no-tags origin main
+          RELEASE_COMMIT="$(git rev-parse HEAD)"
+          export RELEASE_COMMIT
+          git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main
+          gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs" \
+            -f event=push -f head_sha="$RELEASE_COMMIT" -f per_page=100 > "$RUNNER_TEMP/release-runs.json"
+          export RELEASE_RUNS_FILE="$RUNNER_TEMP/release-runs.json"
+          node scripts/verify-release.mjs
 
   build:
     needs: prepare
@@ -114,10 +117,86 @@ jobs:
       - run: npm ci
       - run: go test ./...
       - run: npm test
-      - name: Build application and installer
+      - run: npm run test:release
+      - name: Import optional macOS signing identity
+        if: runner.os == 'macOS'
         env:
-          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
-        run: npm run desktop:build -- --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$APPLE_CERTIFICATE" ]]; then
+            if [[ -n "$APPLE_SIGNING_IDENTITY" && "$APPLE_SIGNING_IDENTITY" != '-' ]]; then
+              echo 'A signing identity requires its certificate on this hosted runner.'
+              exit 1
+            fi
+            exit 0
+          fi
+          test -n "$APPLE_SIGNING_IDENTITY"
+          certificate="$RUNNER_TEMP/commitdeck-signing.p12"
+          keychain="$RUNNER_TEMP/commitdeck-signing.keychain-db"
+          trap 'rm -f "$certificate"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          writeFileSync(`${process.env.RUNNER_TEMP}/commitdeck-signing.p12`, Buffer.from(process.env.APPLE_CERTIFICATE, 'base64'), {mode: 0o600});
+          NODE
+          password="$(openssl rand -base64 32)"
+          echo "::add-mask::$password"
+          security create-keychain -p "$password" "$keychain"
+          echo "COMMITDECK_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security unlock-keychain -p "$password" "$keychain"
+          security set-keychain-settings -t 3600 -u "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+      - name: Import optional Windows signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_PFX: ${{ secrets.WINDOWS_PFX }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_PFX) { exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP 'commitdeck-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_PFX))
+            $password = ConvertTo-SecureString $env:WINDOWS_PFX_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            if (-not $cert.HasPrivateKey) { throw 'Signing certificate has no private key' }
+            $config = Join-Path $env:RUNNER_TEMP 'commitdeck-signing.json'
+            @{ bundle = @{ windows = @{ certificateThumbprint = $cert.Thumbprint; digestAlgorithm = 'sha256'; timestampUrl = 'http://timestamp.digicert.com' } } } | ConvertTo-Json -Depth 4 | Set-Content $config
+            "COMMITDECK_SIGNING_CONFIG=$config" | Out-File $env:GITHUB_ENV -Append
+            "COMMITDECK_SIGNING_THUMBPRINT=$($cert.Thumbprint)" | Out-File $env:GITHUB_ENV -Append
+          } finally { Remove-Item $pfx -ErrorAction SilentlyContinue }
+      - name: Build application and installer
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && (secrets.APPLE_SIGNING_IDENTITY || '-') || '' }}
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
+        run: |
+          args=()
+          if [[ -n "${COMMITDECK_SIGNING_CONFIG:-}" ]]; then
+            args+=(--config "$COMMITDECK_SIGNING_CONFIG")
+          fi
+          npm run desktop:build -- --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} "${args[@]}" -- --locked
+      - name: Remove imported Windows signing certificate
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:COMMITDECK_SIGNING_THUMBPRINT) {
+            Remove-Item "Cert:\CurrentUser\My\$env:COMMITDECK_SIGNING_THUMBPRINT" -ErrorAction SilentlyContinue
+          }
+      - name: Remove temporary macOS signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [[ -n "${COMMITDECK_SIGNING_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$COMMITDECK_SIGNING_KEYCHAIN"
+          fi
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
@@ -132,6 +211,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v6
         with:
@@ -146,6 +226,8 @@ jobs:
           pattern: commitdeck-*
           path: release-assets
           merge-multiple: true
+      - name: Verify complete installer set and create checksums
+        run: node scripts/verify-installers.mjs release-assets
       - name: Publish all installers
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,5 +246,12 @@ jobs:
               --title "CommitDeck $RELEASE_TAG" --generate-notes \
               --prerelease="$PRERELEASE"
           fi
-          gh release upload "$RELEASE_TAG" release-assets/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$PRERELEASE"
+          gh release upload "$RELEASE_TAG" release-assets/*
+      - name: Publish verified draft
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --prerelease="$PRERELEASE"

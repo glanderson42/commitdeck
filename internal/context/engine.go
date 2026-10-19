@@ -7,6 +7,7 @@ import (
 	"commitdeck/internal/issuetracker"
 	"commitdeck/internal/redact"
 	"commitdeck/internal/workspace"
+	"commitdeck/internal/workspacetools"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -195,6 +196,15 @@ func (c *WorkspaceContext) Render() {
 		header = clip(header, maxChars/3) + "\n[Ticket metadata truncated]\n"
 		c.Truncated = append(c.Truncated, "Ticket")
 	}
+	if c.Options.IncludeWorkspaceTools {
+		if maxChars < 4000 {
+			c.Options.IncludeWorkspaceTools = false
+			c.Warnings = append(c.Warnings, "Workspace tools require at least a 4,000 character budget; tools disabled in this snapshot.")
+		} else {
+			header += "\n" + workspacetools.Instructions + "\n"
+			c.IncludedSources = append(c.IncludedSources, "workspaceTools")
+		}
+	}
 	remaining := maxChars - len([]rune(header)) - footerReserve
 	for _, s := range sections {
 		remaining -= len([]rune("\n## " + s.name + "\n\n"))
@@ -234,7 +244,9 @@ func (c *WorkspaceContext) Render() {
 	if feedback != "" && contains(c.Truncated, "Unresolved PR Feedback") {
 		b.WriteString("\nWARNING: Unresolved review feedback is incomplete. Open PR feedback before acting.\n")
 	}
-	c.Markdown = b.String()
+	// Fragments can form a new credential-shaped pattern at their boundary.
+	// Redact the assembled document, not just the individual source bodies.
+	c.Markdown = redact.Text(b.String())
 	if len([]rune(c.Markdown)) > maxChars { // Markers are retained even at the minimum budget.
 		notice := "\n\n[CONTEXT TRUNCATED TO BUDGET. Unresolved feedback may be incomplete; inspect PR and source tabs.]\n"
 		c.Markdown = clip(c.Markdown, maxChars-len([]rune(notice))) + notice
@@ -242,6 +254,7 @@ func (c *WorkspaceContext) Render() {
 			c.Truncated = append(c.Truncated, "Budget")
 		}
 	}
+	c.Markdown = redact.Text(c.Markdown)
 	c.CharacterCount = len([]rune(c.Markdown))
 	c.EstimatedTokens = (len(c.Markdown) + 3) / 4
 	sum := sha256.Sum256([]byte(c.Markdown))

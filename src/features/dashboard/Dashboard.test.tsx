@@ -14,6 +14,7 @@ const row = (
   title,
   externalKey: id,
   status: "In Progress",
+  lifecycle: "CODING",
   repoPath: "",
   worktreePath: "",
   branch: "retry-branch",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +24,39 @@ func (fakeRuntime) Command(ctx context.Context, cwd, id, prompt string) *exec.Cm
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "COMMITDECK_TEST_AGENT="+prompt)
 	return cmd
+}
+
+func TestAgentEventsRedactedBeforeStreaming(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var emitted protocol.Event
+	m := New(db, func(v any) {
+		if event, ok := v.(map[string]any)["event"].(protocol.Event); ok {
+			emitted = event
+		}
+	})
+	defer m.Close()
+	w, err := db.CreateWorkspace(workspace.Workspace{Title: "Ticket"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := db.CreateSession(protocol.Session{WorkspaceID: w.ID, Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.event(s.ID, protocol.Event{Type: "text", Text: "api_key=synthetic-stream-value"}); err != nil {
+		t.Fatal(err)
+	}
+	if emitted.Text != "[REDACTED]" {
+		t.Fatal("credential-shaped output streamed")
+	}
+	events, err := db.Events(s.ID)
+	if err != nil || len(events) != 1 || strings.Contains(events[0].Text, "synthetic-stream-value") {
+		t.Fatal(events, err)
+	}
 }
 func (fakeRuntime) Normalize(b []byte) ([]protocol.Event, string) {
 	m := protocol.Object(b)
@@ -106,15 +140,19 @@ func TestConcurrentSessionsAndCancellation(t *testing.T) {
 	}
 	s, _ := db.Session(sessions[0].ID)
 	w, _ := db.Workspace(s.WorkspaceID)
-	canonical, _ := filepath.EvalSymlinks(w.WorktreePath)
+	wanted, err := os.Stat(w.WorktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	found := false
 	for _, e := range events {
-		if e.Text == canonical {
+		actual, statErr := os.Stat(e.Text)
+		if statErr == nil && os.SameFile(wanted, actual) {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("agent cwd mismatch: want %s, events %+v", canonical, events)
+		t.Fatalf("agent cwd mismatch: want %s, events %+v", w.WorktreePath, events)
 	}
 	if s.ExternalSessionID != "external-1" {
 		t.Fatal("resume ID not persisted")
@@ -140,4 +178,52 @@ func waitStatus(t *testing.T, db *database.DB, id, want string) {
 	}
 	s, _ := db.Session(id)
 	t.Fatalf("want %s, got %+v", want, s)
+}
+
+func TestRawUserPromptIsNotPersisted(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	m := New(db, func(any) {})
+	m.providers["fake"] = fakeRuntime{}
+	defer m.Close()
+	dir := t.TempDir()
+	if b, e := exec.Command("git", "init", dir).CombinedOutput(); e != nil {
+		t.Fatal(string(b), e)
+	}
+	w, err := db.CreateWorkspace(workspace.Workspace{Title: "Ticket", WorktreePath: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.StartSession(context.Background(), w, SessionOptions{Provider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Send(context.Background(), s.ID, `Investigate retries. {"api_key":"synthetic-prompt-value"}`); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus(t, db, s.ID, "completed")
+	var payload string
+	rows, err := db.Query("SELECT payload FROM agent_events WHERE session_id=?", s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		if err = rows.Scan(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(payload, "synthetic-prompt-value") {
+			t.Fatal("raw prompt persisted")
+		}
+		if strings.Contains(payload, "Investigate retries") {
+			found = true
+		}
+	}
+	if err = rows.Err(); err != nil || !found {
+		t.Fatal("useful prompt missing", err)
+	}
 }

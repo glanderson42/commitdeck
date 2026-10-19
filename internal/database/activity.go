@@ -2,11 +2,14 @@ package database
 
 import (
 	"commitdeck/internal/activity"
+	"commitdeck/internal/redact"
 	"database/sql"
 	"errors"
 )
 
 func (d *DB) AppendActivity(e activity.Event) (bool, error) {
+	e.Title, e.Type, e.DedupeKey = redact.Text(e.Title), redact.Text(e.Type), redact.Text(e.DedupeKey)
+	e.Metadata = redact.JSON(e.Metadata)
 	var key any
 	if e.DedupeKey != "" {
 		key = e.DedupeKey
@@ -19,6 +22,9 @@ func (d *DB) AppendActivity(e activity.Event) (bool, error) {
 	return n > 0, err
 }
 func (d *DB) TransitionActivity(id, source, value string, e activity.Event) (bool, error) {
+	e.Title, e.Type = redact.Text(e.Title), redact.Text(e.Type)
+	e.Metadata = redact.JSON(e.Metadata)
+	source, value = redact.Text(source), redact.Text(value)
 	tx, err := d.Begin()
 	if err != nil {
 		return false, err

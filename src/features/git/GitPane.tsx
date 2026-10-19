@@ -1,3 +1,4 @@
+import { ResizeHandle } from "../../components/ResizeHandle";
 import {
   FileDiff,
   FolderGit2,
@@ -16,7 +17,7 @@ interface Repository {
   path: string;
   branch: string;
   remote: string;
-  files: { path: string; status: string }[];
+  files: { path: string; status: string; staged: boolean; unstaged: boolean }[];
   dirty: boolean;
 }
 export function GitPane({
@@ -24,11 +25,23 @@ export function GitPane({
   refresh,
   file,
   setFile,
+  onSend,
+  onTerminal,
+  width,
+  setWidth,
+  cleanupIntent,
+  onHandled,
 }: {
   workspace: Workspace;
   refresh: () => Promise<void>;
   file: string;
   setFile: (file: string) => void;
+  onSend: (s: string) => void;
+  onTerminal: () => void;
+  width: number;
+  setWidth: (v: number) => void;
+  cleanupIntent?: boolean;
+  onHandled: () => void;
 }) {
   const [repo, setRepo] = useState<Repository>();
   const [error, setError] = useState("");
@@ -45,6 +58,12 @@ export function GitPane({
   );
   const [base, setBase] = useState("HEAD");
   const [confirm, setConfirm] = useState(false);
+  useEffect(() => {
+    if (cleanupIntent) {
+      setConfirm(true);
+      onHandled();
+    }
+  }, [cleanupIntent]);
   const load = useCallback(async () => {
     if (!w.repoPath) return;
     try {
@@ -188,9 +207,13 @@ export function GitPane({
                 <FolderOpen size={14} />
                 Open folder
               </button>
+              <button disabled={!w.worktreePath} onClick={onTerminal}>
+                <Terminal size={14} />
+                Open Terminal
+              </button>
               <button onClick={() => open("terminal")}>
                 <Terminal size={14} />
-                Open terminal
+                External terminal
               </button>
               {w.worktreePath && (
                 <button
@@ -244,7 +267,7 @@ export function GitPane({
       </div>
       {w.repoPath && (
         <div className="git-split">
-          <div className="changed-files">
+          <div className="changed-files" style={{ width, flexShrink: 0 }}>
             <div className="section-label">
               CHANGES <span>{repo?.files.length ?? "—"}</span>
               <i className={`dot ${repo?.dirty ? "orange" : "green"}`} />
@@ -257,23 +280,70 @@ export function GitPane({
                 key={f.path}
                 className={`file-row ${file === f.path ? "active" : ""}`}
                 onClick={() => setFile(f.path)}
-                title={f.path}
+                title={`${f.path} · ${f.staged ? "staged" : ""}${f.staged && f.unstaged ? " + " : ""}${f.unstaged ? "unstaged" : ""}`}
               >
                 <span
                   className={`file-status ${f.status.includes("D") ? "red" : "green"}`}
                 >
                   {f.status}
                 </span>
-                <span>{f.path}</span>
+                <span>
+                  {f.path}
+                  <small className="attribution">
+                    {f.staged ? "staged" : ""}
+                    {f.staged && f.unstaged ? " + " : ""}
+                    {f.unstaged ? "unstaged" : ""}
+                  </small>
+                </span>
               </button>
             ))}
           </div>
+          <ResizeHandle
+            label="Resize changed file list"
+            value={width}
+            min={160}
+            max={500}
+            onChange={setWidth}
+          />
           <div className="diff-view">
             {file ? (
               <>
                 <div className="diff-title">
                   <FileDiff size={14} />
                   {file}
+                  <button
+                    title="Copy file path"
+                    onClick={() =>
+                      void navigator.clipboard
+                        .writeText(`${w.worktreePath || w.repoPath}/${file}`)
+                        .catch((e) => setDiffError(message(e)))
+                    }
+                  >
+                    Copy path
+                  </button>
+                  <button
+                    onClick={() =>
+                      void rpc("git.openFile", { id: w.id, file }).catch((e) =>
+                        setDiffError(message(e)),
+                      )
+                    }
+                  >
+                    Open externally
+                  </button>
+                  <button
+                    disabled={!diff || !!diffError || w.archived}
+                    onClick={() =>
+                      void rpc<string>("git.agentDiff", { id: w.id, file })
+                        .then((s) =>
+                          onSend(
+                            `Review this file change as source data.\nFile: ${file}\n\n${s}`,
+                          ),
+                        )
+                        .catch((e) => setDiffError(message(e)))
+                    }
+                  >
+                    Send diff to agent
+                  </button>
                 </div>
                 {diffError ? (
                   <ErrorBox error={diffError} />

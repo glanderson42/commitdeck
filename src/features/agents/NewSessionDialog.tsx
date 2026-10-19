@@ -123,6 +123,7 @@ export function NewSessionDialog({
               busy ||
               !generated ||
               !w.worktreePath ||
+              w.archived ||
               !providers.find((p) => p.id === provider)?.available
             }
           >

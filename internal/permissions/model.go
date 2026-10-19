@@ -1,5 +1,10 @@
 package permissions
 
+import (
+	"commitdeck/internal/redact"
+	"strings"
+)
+
 type Request struct {
 	ID            string   `json:"id"`
 	WorkspaceID   string   `json:"workspaceId"`
@@ -20,6 +25,25 @@ type Request struct {
 	CreatedAt     string   `json:"createdAt"`
 	ResolvedAt    string   `json:"resolvedAt,omitempty"`
 }
+
+// Redacted retains approval diagnostics but prevents secret-bearing executable
+// metadata from becoming a reusable rule. Original wire inputs stay in memory.
+func (r Request) Redacted() Request {
+	originalCommand, originalPath, originalCwd := r.Command, r.FilePath, r.Cwd
+	r.Title = redact.Text(r.Title)
+	r.Description = redact.Text(r.Description)
+	r.Command = redact.Text(r.Command)
+	r.FilePath = redact.Text(r.FilePath)
+	r.Cwd = redact.Text(r.Cwd)
+	argv := strings.Join(append([]string{r.Executable}, r.Arguments...), " ")
+	if originalCommand != r.Command || originalPath != r.FilePath || originalCwd != r.Cwd || redact.Text(argv) != argv {
+		r.HighRisk = true
+		r.Executable = ""
+		r.Arguments = []string{}
+	}
+	return r
+}
+
 type Rule struct {
 	ID          string   `json:"id"`
 	WorkspaceID string   `json:"workspaceId"`

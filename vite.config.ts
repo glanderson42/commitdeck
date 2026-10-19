@@ -9,9 +9,10 @@ export default defineConfig({
     watch: { ignored: ["**/src-tauri/**", "**/bin/**"] },
   },
   clearScreen: false,
+  optimizeDeps: { entries: ["index.html"] },
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.ts"],
   },
 });

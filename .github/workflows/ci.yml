@@ -1,33 +1,144 @@
-name: checks
+name: PR checks
+
 on:
   push:
+    branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Unit tests and smoke checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, windows-2022]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: go test -race ./...
-      - run: go build -o bin/commitdeck-core ./cmd/commitdeck
-      - run: npm run test:smoke
-      - run: npm run test:dev
+      - name: Backend unit tests with race detection
+        run: go test -race ./...
+      - run: go vet ./...
+      - name: Build sidecar
+        shell: bash
+        run: |
+          mkdir -p bin
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            go build -o bin/commitdeck-core.exe ./cmd/commitdeck
+          else
+            go build -o bin/commitdeck-core ./cmd/commitdeck
+          fi
+      - name: Frontend unit tests
+        run: npm test
+      - run: npm run test:release
       - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - if: runner.os == 'macOS'
-        run: npm run desktop:build -- --bundles app
+      - run: npm run test:smoke
+      - run: npm run test:phase3
+      - run: npm run test:dev
+
+  dependencies:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  build:
+    name: Desktop build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-15
+            target: aarch64-apple-darwin
+            bundles: dmg
+            artifact: macos-arm64
+            path: dmg/*.dmg
+          - name: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            bundles: dmg
+            artifact: macos-x64
+            path: dmg/*.dmg
+          - name: Windows x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact: windows-x64
+            path: nsis/*.exe
+          - name: Linux x64 Debian
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bundles: deb
+            artifact: linux-amd64
+            path: deb/*.deb
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libwebkit2gtk-4.1-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: npm ci
+      - name: Build frontend, sidecar, desktop app and installer
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        run: npm run desktop:build -- --ci --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} -- --locked
+      - name: Upload build for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: commitdeck-check-${{ matrix.artifact }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.path }}
+          if-no-files-found: error
+          retention-days: 7

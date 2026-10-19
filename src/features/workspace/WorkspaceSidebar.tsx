@@ -104,6 +104,23 @@ export function WorkspaceSidebar({
             </div>
             <strong>{x.title}</strong>
             <AttentionBadge value={x.attention} />
+            <small className="sidebar-work-meta">
+              {x.tasksCompleted}/{x.tasksTotal}
+              {x.pr
+                ? ` · PR #${x.pr.number} ${x.pr.draft ? "draft" : x.pr.state.toLowerCase()}`
+                : ""}
+              {x.sessions.some((s) =>
+                ["running", "waiting_permission"].includes(s.status),
+              )
+                ? " · " +
+                  x.sessions
+                    .filter((s) =>
+                      ["running", "waiting_permission"].includes(s.status),
+                    )
+                    .map((s) => s.provider)
+                    .join(", ")
+                : ""}
+            </small>
           </button>
         ))}
         {boot && list.length === 0 && (
